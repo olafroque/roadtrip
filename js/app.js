@@ -70,7 +70,8 @@ function carImage(color){
 let TRIP = null;            // trip/main document
 let places = [];
 let t = 0, START = 0, END = 0, DAYS = [];
-let selId = null, tab = "places", fStatus = "all", fWho = "all";
+let selId = null, tab = "places", fStatus = "all", fWho = "all", fKind = "all", groupBy = "city";
+try { groupBy = localStorage.getItem("groupBy") || "city"; } catch {}
 let playing = false, ride = false, dropFor = null, draft = null;
 let me = {uid:null, name:""};
 
@@ -103,26 +104,28 @@ function along(key, frac, rev){
   const target = f * r.len; let i = 1;
   while (i < r.cum.length-1 && r.cum[i] < target) i++;
   const a = r.pts[i-1], b = r.pts[i], seg = (r.cum[i]-r.cum[i-1]) || 1, u = (target - r.cum[i-1]) / seg;
-  return {ll:[a[0]+(b[0]-a[0])*u, a[1]+(b[1]-a[1])*u], left:(1-f)*r.len};
+  let br = Math.atan2((b[0]-a[0]) * Math.cos(a[1]*Math.PI/180), b[1]-a[1]); if (rev) br += Math.PI;
+  return {ll:[a[0]+(b[0]-a[0])*u, a[1]+(b[1]-a[1])*u], left:(1-f)*r.len, bearing:br};
 }
+const lastBearing = {family:0, friends:0};
 function carAt(g, tm){
   for (const p of places) {
     if (p.status !== "confirmed" || !p.day || !p.time || p.lng == null || !forGroup(p, g)) continue;
     const s = placeStart(p), e = s + (p.dur || 120) * 60000;
-    if (tm >= s && tm <= e) return {ll:[p.lng,p.lat], mode:"place", text:"At " + p.name};
+    if (tm >= s && tm <= e) return {ll:[p.lng,p.lat], mode:"place", text:"At " + p.name, bearing:lastBearing[g]};
   }
   const plan = PLAN()[g];
   for (let i=0;i<plan.length;i++) {
     const s = plan[i]; if (!s.drive) continue;
     const d = DRIVES()[s.drive], at = T(s.at), dur = d.sec*SLOW*1000;
-    if (tm < at) { const st = STAYS()[plan[i-1].stay]; return {ll:st.ll, mode:"stay", text:"At " + (st.short||st.name)}; }
+    if (tm < at) { const st = STAYS()[plan[i-1].stay]; return {ll:st.ll, mode:"stay", text:"At " + (st.short||st.name), bearing:lastBearing[g]}; }
     if (tm <= at + dur) {
-      const a = along(d.route, (tm - at)/dur, d.rev);
-      return {ll:a.ll, mode:"drive", text:"Driving " + d.road + " · " + Math.round(a.left) + " mi to " + (STAYS()[s.to].short||STAYS()[s.to].name)};
+      const a = along(d.route, (tm - at)/dur, d.rev); lastBearing[g] = a.bearing;
+      return {ll:a.ll, mode:"drive", bearing:a.bearing, text:"Driving " + d.road + " · " + Math.round(a.left) + " mi to " + (STAYS()[s.to].short||STAYS()[s.to].name)};
     }
   }
   const st = STAYS()[plan[plan.length-1].stay];
-  return {ll:st.ll, mode:"stay", text:"Home"};
+  return {ll:st.ll, mode:"stay", text:"Home", bearing:lastBearing[g]};
 }
 function stayOn(g, tm){
   const plan = PLAN()[g]; let cur = plan[0].stay;
@@ -131,12 +134,15 @@ function stayOn(g, tm){
 }
 
 /* ===================== Cesium map ===================== */
-let viewer = null, tileset = null;
+let viewer = null, tileset = null, tilesetTried = false;
 const ents = {cars:{}, pins:new Map(), models:new Map(), routes:[], stays:[]};
 const C = () => window.Cesium;
+const LOW = matchMedia("(max-width: 820px), (pointer: coarse)").matches;
+let mode = "board";
+try { if (localStorage.getItem("mapMode") === "3d" && MAPS_KEY) mode = "3d"; } catch {}
 
 async function initMap(){
-  if (!window.Cesium) { banner("The 3D map didn't load. Reload the page."); return; }
+  if (!window.Cesium) { banner("The map didn't load. Reload the page."); return; }
   const Cesium = C();
   viewer = new Cesium.Viewer("map", {
     baseLayer:false, baseLayerPicker:false, geocoder:false, homeButton:false, sceneModePicker:false,
@@ -144,9 +150,9 @@ async function initMap(){
     infoBox:false, selectionIndicator:false,
     requestRenderMode:true, maximumRenderTimeChange:Infinity   // only redraw when something changes
   });
-  // Keep the camera over California so it doesn't stream tiles for the rest of the world.
-  const cam = viewer.scene.screenSpaceCameraController;
-  cam.maximumZoomDistance = 750000;
+  // Keep the camera over California so it never streams tiles for the rest of the world.
+  viewer.scene.screenSpaceCameraController.maximumZoomDistance = 750000;
+  viewer.scene.screenSpaceCameraController.enableCollisionDetection = true;
   viewer.camera.moveEnd.addEventListener(() => {
     const c = Cesium.Cartographic.fromCartesian(viewer.camera.position);
     const lon = Cesium.Math.toDegrees(c.longitude), lat = Cesium.Math.toDegrees(c.latitude);
@@ -154,56 +160,70 @@ async function initMap(){
     if (Math.abs(cl[0]-lon) > 0.01 || Math.abs(cl[1]-lat) > 0.01)
       viewer.camera.flyTo({destination:Cesium.Cartesian3.fromDegrees(cl[0], cl[1], Math.min(c.height, 700000)),
         orientation:{heading:viewer.camera.heading, pitch:viewer.camera.pitch, roll:0}, duration:0.8});
+    rescaleModels(false);
   });
-  viewer.scene.screenSpaceCameraController.enableCollisionDetection = true;
-  viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#1d2a33");
-  if (MAPS_KEY) {
-    try {
-      const LOW = matchMedia("(max-width: 820px), (pointer: coarse)").matches;
-      tileset = await Cesium.createGooglePhotorealistic3DTileset({key:MAPS_KEY, onlyUsingWithGoogleGeocoder:true}, {
-        showCreditsOnScreen:true,
-        maximumScreenSpaceError: LOW ? 32 : 20,     // less detail = fewer tiles; phones get the lighter setting
-        dynamicScreenSpaceError:true,               // low detail toward the horizon
-        foveatedScreenSpaceError:true,              // load the center of the screen first
-        cacheBytes: (LOW ? 256 : 768) * 1024 * 1024
-      });
-      const chip = $("#loading");
-      tileset.loadProgress.addEventListener((pending, processing) => { chip.hidden = pending + processing === 0; });
-      tileset.allTilesLoaded.addEventListener(() => { chip.hidden = true; });
-      viewer.scene.primitives.add(tileset);
-      viewer.scene.globe.show = false;
-      viewer.scene.skyAtmosphere.show = true;
-    } catch (e) {
-      banner("Google 3D tiles didn't load (" + (e?.message || e) + "). Showing the flat map instead.");
-      addOsm();
-    }
-  } else {
-    addOsm();
-    banner("Preview mode: flat map. Real 3D appears once the Google Maps key is added.");
-  }
+  viewer.camera.percentageChanged = 0.1;
+  viewer.camera.changed.addEventListener(() => rescaleModels(false));
+  // Board map: free street map with labels (OpenStreetMap data, CARTO style). No Google usage.
+  const g = viewer.scene.globe;
+  g.baseColor = Cesium.Color.fromCssColorString("#aad3df");
+  g.showGroundAtmosphere = false;
+  g.enableLighting = false;
+  viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
+    url:"https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png", subdomains:["a","b","c","d"],
+    maximumLevel:19, credit:new Cesium.Credit("© OpenStreetMap contributors © CARTO", true)}));
   const click = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
   // Drop mode: treat a short press as a tap even if the mouse or finger moved a little.
   let downAt = null;
-  const onDown = ev => { downAt = Cesium.Cartesian2.clone(ev.position); };
-  const onUp = ev => {
+  click.setInputAction(ev => { downAt = Cesium.Cartesian2.clone(ev.position); }, Cesium.ScreenSpaceEventType.LEFT_DOWN);
+  click.setInputAction(ev => {
     if (!dropFor || !downAt) return;
     const moved = Cesium.Cartesian2.distance(downAt, ev.position); downAt = null;
     if (moved > 12) return; // that was a drag to move the map
     dropAt(ev.position);
-  };
-  click.setInputAction(onDown, Cesium.ScreenSpaceEventType.LEFT_DOWN);
-  click.setInputAction(onUp, Cesium.ScreenSpaceEventType.LEFT_UP);
+  }, Cesium.ScreenSpaceEventType.LEFT_UP);
   click.setInputAction(ev => {
     if (dropFor) return;
     const picked = viewer.scene.pick(ev.position);
     const id = picked?.id?.properties?.placeId?.getValue();
     if (id) openPlace(id);
   }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+  $("#modeBtn").hidden = !MAPS_KEY;
+  await setMode(mode);
   fitTrip(0);
 }
-function addOsm(){
+async function ensureTileset(){
+  if (tileset || tilesetTried) return tileset;
+  tilesetTried = true;
   const Cesium = C();
-  viewer.imageryLayers.addImageryProvider(new Cesium.OpenStreetMapImageryProvider({url:"https://tile.openstreetmap.org/"}));
+  try {
+    tileset = await Cesium.createGooglePhotorealistic3DTileset({key:MAPS_KEY, onlyUsingWithGoogleGeocoder:true}, {
+      showCreditsOnScreen:true,
+      maximumScreenSpaceError: LOW ? 32 : 20,     // less detail = fewer tiles; phones get the lighter setting
+      dynamicScreenSpaceError:true, foveatedScreenSpaceError:true,
+      cacheBytes: (LOW ? 256 : 768) * 1024 * 1024
+    });
+    const chip = $("#loading");
+    tileset.loadProgress.addEventListener((pending, processing) => { chip.hidden = mode !== "3d" || pending + processing === 0; });
+    tileset.allTilesLoaded.addEventListener(() => { chip.hidden = true; });
+    viewer.scene.primitives.add(tileset);
+  } catch (e) {
+    tileset = null;
+    banner("Google 3D didn't load (" + (e?.message || e) + "). Staying on the board map.");
+  }
+  return tileset;
+}
+async function setMode(m){
+  if (m === "3d" && !(MAPS_KEY && await ensureTileset())) m = "board";
+  mode = m;
+  try { localStorage.setItem("mapMode", m); } catch {}
+  if (tileset) tileset.show = m === "3d";
+  viewer.scene.globe.show = m === "board";
+  viewer.scene.skyAtmosphere.show = m === "3d";
+  const b = $("#modeBtn"); b.textContent = m === "3d" ? "Board map" : "3D view"; b.setAttribute("aria-pressed", String(m === "3d"));
+  if (m === "board") $("#loading").hidden = true;
+  rescaleModels(true);
+  viewer.scene.requestRender();
 }
 function banner(text){ const b = $("#banner"); b.textContent = text; b.hidden = !text; }
 function fitTrip(dur = 1.5){
@@ -244,7 +264,20 @@ function drawRoutes(){
 const MC = {green:"#2f9e44", greenD:"#21753a", red:"#e03131", redD:"#a61e1e", stone:"#ece6d8", stoneD:"#c9c0ab",
   bun:"#d9a35b", lettuce:"#63b84f", patty:"#6b3e26", cheese:"#f5c242", trunk:"#7a5230", pine:"#2b8a3e", pineL:"#3fa34d",
   white:"#f6f6f3", dark:"#3a3f3c", gray:"#8f9592"};
-const U = 7; // meters per model unit
+let U = 7, lastU = 0;               // meters per model unit; grows as the camera rises so pieces stay readable
+const modelSpecs = new Map();      // key -> {kind, ll, accent, placeId}
+function unitForCamera(){
+  const hgt = viewer.camera.positionCartographic.height;
+  return Math.min(600, Math.max(mode === "3d" ? 5 : 6, hgt / (mode === "3d" ? 450 : 260)));
+}
+function rescaleModels(force){
+  if (!viewer) return;
+  const u = unitForCamera();
+  if (!force && lastU && Math.abs(u - lastU) / lastU < 0.15) return;
+  U = u; lastU = u;
+  for (const [key, s] of modelSpecs) buildModel(key, s);
+  viewer.scene.requestRender();
+}
 function partsFor(kind, accent){
   const B = (x,y,z,w,d,hgt,c,roll) => ({t:"box", x,y,z, dim:[w,d,hgt], c, roll});
   const Cy = (x,y,z,len,r,rt,c) => ({t:"cyl", x,y,z, len, r, rt:rt ?? r, c});
@@ -271,26 +304,32 @@ function partsFor(kind, accent){
   }
 }
 function addModel(key, kind, ll, accent, placeId){
+  modelSpecs.set(key, {kind, ll, accent, placeId});
+  buildModel(key, modelSpecs.get(key));
+}
+function buildModel(key, s){
   const Cesium = C();
-  removeModel(key);
+  const old = ents.models.get(key); if (old) for (const e of old) viewer.entities.remove(e);
   const list = [];
-  const mLon = U / (111320*Math.cos(ll[1]*Math.PI/180)), mLat = U / 110540;
-  const show = new Cesium.DistanceDisplayCondition(0, 60000);
-  for (const p of partsFor(kind, accent)) {
-    const pos = Cesium.Cartesian3.fromDegrees(ll[0] + p.x*mLon, ll[1] + p.y*mLat, p.z*U);
+  const mLon = U / (111320*Math.cos(s.ll[1]*Math.PI/180)), mLat = U / 110540;
+  for (const p of partsFor(s.kind, s.accent)) {
+    const pos = Cesium.Cartesian3.fromDegrees(s.ll[0] + p.x*mLon, s.ll[1] + p.y*mLat, p.z*U);
     const color = Cesium.Color.fromCssColorString(p.c);
-    const base = {position:pos, properties:placeId ? {placeId} : undefined};
+    const base = {position:pos, properties:s.placeId ? {placeId:s.placeId} : undefined};
     if (p.t === "box") {
       if (p.roll) base.orientation = Cesium.Transforms.headingPitchRollQuaternion(pos, new Cesium.HeadingPitchRoll(0, 0, Cesium.Math.toRadians(p.roll)));
-      base.box = {dimensions:new Cesium.Cartesian3(p.dim[0]*U, p.dim[1]*U, p.dim[2]*U), material:color, heightReference:Cesium.HeightReference.RELATIVE_TO_GROUND, distanceDisplayCondition:show};
+      base.box = {dimensions:new Cesium.Cartesian3(p.dim[0]*U, p.dim[1]*U, p.dim[2]*U), material:color, heightReference:Cesium.HeightReference.RELATIVE_TO_GROUND};
     } else {
-      base.cylinder = {length:p.len*U, topRadius:p.rt*U, bottomRadius:p.r*U, material:color, heightReference:Cesium.HeightReference.RELATIVE_TO_GROUND, distanceDisplayCondition:show, slices:20};
+      base.cylinder = {length:p.len*U, topRadius:p.rt*U, bottomRadius:p.r*U, material:color, heightReference:Cesium.HeightReference.RELATIVE_TO_GROUND, slices:20};
     }
     list.push(viewer.entities.add(base));
   }
   ents.models.set(key, list);
 }
-function removeModel(key){ const l = ents.models.get(key); if (l) { for (const e of l) viewer.entities.remove(e); ents.models.delete(key); } }
+function removeModel(key){
+  modelSpecs.delete(key);
+  const l = ents.models.get(key); if (l) { for (const e of l) viewer.entities.remove(e); ents.models.delete(key); }
+}
 
 /* stays */
 function drawStays(){
@@ -326,13 +365,13 @@ function syncPins(){
     const e = viewer.entities.add({
       position:Cesium.Cartesian3.fromDegrees(p.lng, p.lat),
       properties:{placeId:p.id},
-      billboard:{image:pinImage(p.kind, col, p.status === "idea"), width:p.id === selId ? 44 : 34, height:p.id === selId ? 44 : 34,
+      billboard:(p.status === "confirmed" && !atStay) ? undefined : {image:pinImage(p.kind, col, p.status === "idea"), width:p.id === selId ? 44 : 34, height:p.id === selId ? 44 : 34,
         heightReference:Cesium.HeightReference.CLAMP_TO_GROUND, verticalOrigin:Cesium.VerticalOrigin.CENTER,
         disableDepthTestDistance:Number.POSITIVE_INFINITY, pixelOffset:new Cesium.Cartesian2(0, -24)},
       label:atStay && p.id !== selId ? undefined : {text:p.name, font:"700 13px Atkinson Hyperlegible, sans-serif", fillColor:Cesium.Color.WHITE, outlineColor:Cesium.Color.BLACK, outlineWidth:3,
-        style:Cesium.LabelStyle.FILL_AND_OUTLINE, verticalOrigin:Cesium.VerticalOrigin.BOTTOM, pixelOffset:new Cesium.Cartesian2(0, -48),
+        style:Cesium.LabelStyle.FILL_AND_OUTLINE, verticalOrigin:Cesium.VerticalOrigin.BOTTOM, pixelOffset:new Cesium.Cartesian2(0, p.status === "confirmed" ? -12 : -48),
         heightReference:Cesium.HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance:Number.POSITIVE_INFINITY,
-        distanceDisplayCondition:new Cesium.DistanceDisplayCondition(0, p.id === selId ? 1e7 : 12000)}
+        distanceDisplayCondition:new Cesium.DistanceDisplayCondition(0, p.id === selId ? 1e7 : p.status === "confirmed" ? 60000 : 12000)}
     });
     ents.pins.set(p.id, {e, sig});
     // 3D model for confirmed places (not when the plan is at a stay)
@@ -341,18 +380,40 @@ function syncPins(){
   for (const [id, v] of ents.pins) if (!seen.has(id)) { viewer.entities.remove(v.e); ents.pins.delete(id); removeModel("place:" + id); }
 }
 
-/* cars */
+/* cars: toy-car game pieces that turn with the road */
+const CAR_PARTS = c => [
+  {f:0, r:0, z:0.75, dim:[4.6,2.3,1.1], c},                 // body
+  {f:-0.4, r:0, z:1.75, dim:[2.6,2.0,0.9], c:"#e8f1f6"},     // cabin
+  {f:1.6, r:0.75, z:0.45, dim:[0.9,0.5,0.9], c:"#2b2f2d"}, {f:1.6, r:-0.75, z:0.45, dim:[0.9,0.5,0.9], c:"#2b2f2d"},
+  {f:-1.6, r:0.75, z:0.45, dim:[0.9,0.5,0.9], c:"#2b2f2d"}, {f:-1.6, r:-0.75, z:0.45, dim:[0.9,0.5,0.9], c:"#2b2f2d"},
+  {f:-0.4, r:0, z:2.35, dim:[0.8,0.8,0.3], c}               // roof light
+];
 function drawCars(){
   const Cesium = C();
   for (const g of ["friends","family"]) {
+    for (const e of (ents.cars[g + ":parts"] || [])) viewer.entities.remove(e);
     if (ents.cars[g]) viewer.entities.remove(ents.cars[g]);
+    const CU = () => Math.max(U * 2.2, 10);   // cars a bit oversized so they read as game tokens
+    const parts = CAR_PARTS(gcol(g)).map(pt => {
+      const posAt = () => {
+        const c = carAt(g, t), b = c.bearing || 0, u = CU();
+        const east = pt.f*u*Math.sin(b) + pt.r*u*Math.cos(b), north = pt.f*u*Math.cos(b) - pt.r*u*Math.sin(b);
+        return Cesium.Cartesian3.fromDegrees(c.ll[0] + east / (111320*Math.cos(c.ll[1]*Math.PI/180)), c.ll[1] + north / 110540, pt.z*u);
+      };
+      return viewer.entities.add({
+        position:new Cesium.CallbackProperty(posAt, false),
+        orientation:new Cesium.CallbackProperty(() => Cesium.Transforms.headingPitchRollQuaternion(posAt(), new Cesium.HeadingPitchRoll((carAt(g, t).bearing || 0) - Math.PI/2, 0, 0)), false),
+        box:{dimensions:new Cesium.CallbackProperty(() => new Cesium.Cartesian3(pt.dim[0]*CU(), pt.dim[1]*CU(), pt.dim[2]*CU()), false),
+          material:Cesium.Color.fromCssColorString(pt.c), heightReference:Cesium.HeightReference.RELATIVE_TO_GROUND}
+      });
+    });
+    ents.cars[g + ":parts"] = parts;
+    // label + camera target
     ents.cars[g] = viewer.entities.add({
-      viewFrom:new Cesium.Cartesian3(-900, -1600, 1100),
+      viewFrom:new Cesium.Cartesian3(-500, -1000, 700),
       position:new Cesium.CallbackProperty(() => { const c = carAt(g, t); return Cesium.Cartesian3.fromDegrees(c.ll[0], c.ll[1]); }, false),
-      billboard:{image:carImage(gcol(g)), width:52, height:52, heightReference:Cesium.HeightReference.CLAMP_TO_GROUND,
-        disableDepthTestDistance:Number.POSITIVE_INFINITY, verticalOrigin:Cesium.VerticalOrigin.CENTER},
       label:{text:G()[g].short, font:"700 12px Atkinson Hyperlegible, sans-serif", fillColor:Cesium.Color.WHITE, showBackground:true,
-        backgroundColor:Cesium.Color.fromCssColorString("#17221d"), pixelOffset:new Cesium.Cartesian2(0, -40),
+        backgroundColor:Cesium.Color.fromCssColorString(gcol(g)), pixelOffset:new Cesium.Cartesian2(0, -34),
         heightReference:Cesium.HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance:Number.POSITIVE_INFINITY}
     });
   }
@@ -406,8 +467,9 @@ $("#rideBtn").onclick = e => {
   ride = !ride; e.currentTarget.setAttribute("aria-pressed", String(ride));
   if (!viewer) return;
   if (ride) { viewer.trackedEntity = ents.cars.family; banner("Riding along with our car. Press play to drive. Drag to look around."); }
-  else { viewer.trackedEntity = undefined; banner(MAPS_KEY ? "" : "Preview mode: flat map. Real 3D appears once the Google Maps key is added."); }
+  else { viewer.trackedEntity = undefined; banner(""); }
 };
+$("#modeBtn").onclick = () => { if (viewer) setMode(mode === "3d" ? "board" : "3d"); };
 $("#fitBtn").onclick = () => { if (ride) $("#rideBtn").click(); fitTrip(); };
 $("#hereBtn").onclick = () => { if (ride) $("#rideBtn").click(); flyTo(STAYS()[stayOn("family", t)].ll, 1800); };
 
@@ -434,24 +496,43 @@ function icon(p){
   const k = KINDS[p.kind] || KINDS.sight, col = `var(${G()[p.who]?.color || "--both"})`;
   return h("span",{class:"ic " + (p.status === "idea" ? "idea" : ""), style:p.status === "idea" ? `color:${col}` : `background:${col}`, html:svg(k.d)});
 }
+function cityOf(p){
+  const parts = (p.address || "").split(",").map(s => s.trim()).filter(Boolean);
+  const i = parts.findIndex(s => /^CA\b/.test(s));
+  if (i > 0) return parts[i-1];
+  if (parts.length >= 2) return parts[parts.length-1];
+  return "No address yet";
+}
 function viewPlaces(){
   const out = [];
   const chips = (vals, cur, set) => vals.map(([k,l]) => h("button",{class:"chip","aria-pressed":String(cur === k), onclick:() => { set(k); render(); }}, l));
+  out.push(h("div",{class:"seg",style:"margin-bottom:10px"}, ...[["city","By city"],["kind","By type"],["day","By day"]].map(([k,l]) =>
+    h("button",{"aria-pressed":String(groupBy === k), onclick:() => { groupBy = k; try { localStorage.setItem("groupBy", k); } catch {} render(); }}, l))));
   out.push(h("div",{class:"filters"},
-    chips([["all","All"],["confirmed","Confirmed"],["maybe","Maybe"],["idea","Ideas"]], fStatus, k => fStatus = k),
-    chips([["all","Everyone"],["family","Ours"],["friends",G().friends.short]], fWho, k => fWho = k)));
-  const list = places.filter(p => (fStatus === "all" || p.status === fStatus) && (fWho === "all" || forGroup(p, fWho)));
+    chips([["all","All"],["confirmed","Confirmed"],["maybe","Maybe"],["idea","Ideas"]], fStatus, k => fStatus = k)));
+  const kindSel = h("select",{id:"fKind"}, h("option",{value:"all"},"All types"), ...Object.entries(KINDS).map(([k,v]) => h("option",{value:k, selected:fKind === k}, v.label)));
+  kindSel.onchange = () => { fKind = kindSel.value; render(); };
+  const whoSel = h("select",{id:"fWho"}, ...[["all","Everyone"],["family",G().family.short],["friends",G().friends.short]].map(([k,l]) => h("option",{value:k, selected:fWho === k}, l)));
+  whoSel.onchange = () => { fWho = whoSel.value; render(); };
+  out.push(h("div",{class:"two",style:"margin-bottom:6px"}, h("label",{class:"f"},"Type", kindSel), h("label",{class:"f"},"For", whoSel)));
+  const list = places.filter(p => (fStatus === "all" || p.status === fStatus) && (fWho === "all" || forGroup(p, fWho)) && (fKind === "all" || p.kind === fKind));
   if (!list.length) {
-    out.push(h("div",{class:"empty"}, h("b",null, places.length ? "Nothing matches these filters" : "No places yet"), places.length ? "Try All and Everyone." : "Add a restaurant, landmark or plan with + Add place."));
+    out.push(h("div",{class:"empty"}, h("b",null, places.length ? "Nothing matches these filters" : "No places yet"), places.length ? "Try All, All types and Everyone." : "Add a restaurant, landmark or plan with + Add place."));
     return out;
   }
+  const keyOf = p => groupBy === "city" ? cityOf(p) : groupBy === "kind" ? (KINDS[p.kind]?.label || "Other") : (p.day || "any");
   const groups = {};
-  for (const p of list) (groups[p.day || "any"] ||= []).push(p);
-  const order = [...DAYS.filter(d => groups[d]), ...(groups.any ? ["any"] : [])];
-  for (const d of order) {
-    out.push(h("div",{class:"dayhead"}, d === "any" ? "No day set yet" : dayName(d)));
-    groups[d].sort((a,b) => (a.time||"99").localeCompare(b.time||"99") || a.name.localeCompare(b.name));
-    for (const p of groups[d]) {
+  for (const p of list) (groups[keyOf(p)] ||= []).push(p);
+  let order;
+  if (groupBy === "day") order = [...DAYS.filter(d => groups[d]), ...(groups.any ? ["any"] : [])];
+  else if (groupBy === "kind") order = Object.values(KINDS).map(k => k.label).filter(k => groups[k]).concat(groups.Other ? ["Other"] : []);
+  else order = Object.keys(groups).sort((a,b) => a === "No address yet" ? 1 : b === "No address yet" ? -1 : groups[b].length - groups[a].length || a.localeCompare(b));
+  const rank = {confirmed:0, maybe:1, idea:2};
+  for (const k of order) {
+    const head = groupBy === "day" ? (k === "any" ? "No day set yet" : dayName(k)) : k;
+    out.push(h("div",{class:"dayhead"}, head + " · " + groups[k].length));
+    groups[k].sort((a,b) => (rank[a.status] - rank[b.status]) || (a.day||"9").localeCompare(b.day||"9") || (a.time||"99").localeCompare(b.time||"99") || a.name.localeCompare(b.name));
+    for (const p of groups[k]) {
       let dist = null;
       if (p.lng != null) {
         const g = fWho === "friends" ? "friends" : "family";
@@ -459,7 +540,8 @@ function viewPlaces(){
         const m = hav(st.ll, [p.lng,p.lat]);
         dist = m < 0.2 ? "at " + (st.short || st.name) : miles(m * ROAD) + " from " + (st.short || st.name);
       }
-      const meta = [KINDS[p.kind]?.label, p.time ? fmtT.format(placeStart(p)) : null, dist].filter(Boolean).join(" · ");
+      const when = p.day ? fmtWd.format(T(p.day + "T12:00")) + (p.time ? " " + fmtT.format(placeStart(p)) : "") : null;
+      const meta = [groupBy === "kind" ? cityOf(p) : KINDS[p.kind]?.label, groupBy === "day" ? (p.time ? fmtT.format(placeStart(p)) : null) : when, dist].filter(Boolean).join(" · ");
       out.push(h("button",{class:"row", onclick:() => openPlace(p.id)}, icon(p),
         h("span",{style:"min-width:0"}, h("div",{class:"nm"}, p.name), h("div",{class:"mt"}, meta)),
         p.lng == null ? h("span",{class:"pill nopin"},"Needs pin") : h("span",{class:"pill " + p.status}, p.status)));
@@ -690,8 +772,10 @@ async function deletePlace(id){
 /* drive plan + mileage */
 function mileage(g){
   const plan = PLAN()[g];
+  const byDay = {};
   let drives = 0, side = 0, counted = 0, nopin = 0;
-  for (const s of plan) if (s.drive) drives += DRIVES()[s.drive].mi;
+  for (const d of DAYS) byDay[d] = {drive:0, side:0};
+  for (const s of plan) if (s.drive) { const mi = DRIVES()[s.drive].mi; drives += mi; const dk = dayKey(T(s.at)); if (byDay[dk]) byDay[dk].drive += mi; }
   for (const d of DAYS) {
     const stops = places.filter(p => p.status === "confirmed" && p.day === d && forGroup(p, g)).sort((a,b) => (a.time || "12:00").localeCompare(b.time || "12:00"));
     const pinned = stops.filter(p => p.lng != null);
@@ -704,18 +788,22 @@ function mileage(g){
     else { from = to = STAYS()[stayOn(g, T(d + "T12:00"))].ll; }
     const pts = [from, ...pinned.map(p => [p.lng,p.lat]), to];
     let chain = 0; for (let k=1;k<pts.length;k++) chain += hav(pts[k-1], pts[k]);
-    side += Math.max(0, (chain - (i > 0 ? hav(from, to) : 0)) * ROAD);
+    const extra = Math.max(0, (chain - (i > 0 ? hav(from, to) : 0)) * ROAD);
+    side += extra; byDay[d].side += extra;
   }
-  return {drives, side:Math.round(side), total:Math.round(drives + side), counted, nopin};
+  return {drives, side:Math.round(side), total:Math.round(drives + side), counted, nopin, byDay};
 }
 function shieldsFor(road){
   return road.split("·").map(s => s.trim()).map(s => { const m = s.match(/^(I|US|CA)-(\d+)/); return m ? h("span",{class:"shield " + (m[1] === "CA" ? "ca" : "")}, m[2]) : null; });
 }
+let openDays = null, importMsg = "";
 function viewPlan(){
   const out = [];
-  const box = h("div",{style:"display:grid;gap:10px;margin-bottom:14px"});
+  const M = {family:mileage("family"), friends:mileage("friends")};
+  // totals
+  const box = h("div",{style:"display:grid;gap:10px;margin-bottom:12px"});
   for (const g of ["family","friends"]) {
-    const m = mileage(g);
+    const m = M[g];
     box.append(h("div",{style:`border:1px solid var(--line);border-left:5px solid var(${G()[g].color});border-radius:8px;padding:10px 12px;background:var(--panel2)`},
       h("div",{style:"display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap"}, h("b",null, G()[g].label),
         h("span",{style:"font-family:var(--f-display);font-weight:800;font-size:28px;line-height:1"}, m.total.toLocaleString() + " mi")),
@@ -723,20 +811,48 @@ function viewPlan(){
         m.nopin ? " · " + m.nopin + " confirmed without a pin not counted" : "")));
   }
   out.push(box);
-  out.push(h("p",{style:"margin:0 0 12px;color:var(--muted);font-size:14px"},"Main drives come from TomTom with typical traffic, plus about 15% for stops. Miles to confirmed stops are estimates."));
-  for (const g of ["family","friends"]) {
-    out.push(h("div",{class:"dayhead"}, G()[g].label));
-    for (const s of PLAN()[g]) {
-      if (!s.drive) continue;
-      const d = DRIVES()[s.drive], at = T(s.at), arr = at + d.sec*SLOW*1000;
-      out.push(h("div",{class:"leg " + (g === "friends" ? "fri" : ""), style:`border-left-color:var(${G()[g].color})`},
-        h("h3",null, ...shieldsFor(d.road), " ", fmtDay.format(at), s.assumed ? h("span",{class:"tag", title:s.assumed},"assumed") : null),
-        h("div",{class:"mt"}, fmtT.format(at) + " → about " + fmtT.format(arr) + " · " + d.mi + " mi · " + hrs(d.sec) + " driving"),
+  // day-by-day dropdowns
+  if (!openDays) { openDays = new Set([dayKey(t)]); }
+  for (const d of DAYS) {
+    const items = [];
+    for (const g of ["family","friends"]) for (const s of PLAN()[g]) {
+      if (!s.drive || dayKey(T(s.at)) !== d) continue;
+      const dr = DRIVES()[s.drive], at = T(s.at);
+      items.push({sort:at, el:h("div",{class:"leg", style:`border-left-color:var(${G()[g].color})`},
+        h("h3",null, ...shieldsFor(dr.road), " ", G()[g].short, s.assumed ? h("span",{class:"tag", title:s.assumed},"assumed") : null),
+        h("div",{class:"mt"}, fmtT.format(at) + " → about " + fmtT.format(at + dr.sec*SLOW*1000) + " · " + dr.mi + " mi · " + hrs(dr.sec) + " driving"),
         h("div",{class:"mt"}, "To " + STAYS()[s.to].name),
-        s.assumed ? h("div",{class:"mt",style:"color:var(--warn)"}, s.assumed) : null));
+        s.assumed ? h("div",{class:"mt",style:"color:var(--warn)"}, s.assumed) : null)});
     }
+    for (const p of places.filter(p => p.status === "confirmed" && p.day === d)) {
+      const st = STAYS()[stayOn(p.who === "friends" ? "friends" : "family", T(d + "T12:00"))];
+      const m = p.lng != null ? hav(st.ll, [p.lng,p.lat]) : null;
+      items.push({sort:p.time ? placeStart(p) : T(d + "T23:58"), el:h("button",{class:"row", onclick:() => openPlace(p.id)}, icon(p),
+        h("span",{style:"min-width:0"}, h("div",{class:"nm"}, p.name),
+          h("div",{class:"mt"}, [p.time ? fmtT.format(placeStart(p)) : "Any time", G()[p.who]?.short, m == null ? "needs a pin" : m < 0.2 ? "at " + (st.short || st.name) : "about " + Math.round(m*ROAD) + " mi from " + (st.short || st.name)].filter(Boolean).join(" · "))),
+        h("span",{class:"pill confirmed"},"✓"))});
+    }
+    items.sort((a,b) => a.sort - b.sort);
+    const fam = M.family.byDay[d], fri = M.friends.byDay[d];
+    const dayMi = (x) => Math.round(x.drive + x.side);
+    const sum = h("summary",{class:"dsum"},
+      h("span",{class:"dname"}, dayName(d)),
+      h("span",{class:"dmi"},
+        h("i",{style:"background:var(--fam)"}), dayMi(fam) + " mi", h("i",{style:"background:var(--fri)"}), dayMi(fri) + " mi"));
+    const det = h("details",{class:"day", open:openDays.has(d)}, sum,
+      h("div",{class:"dbody"}, items.length ? items.map(x => x.el) :
+        h("div",{class:"mt",style:"padding:6px 2px"}, "Nothing confirmed yet. Free day at " + (STAYS()[stayOn("family", T(d + "T12:00"))].short || "the stay") + ".")));
+    det.addEventListener("toggle", () => { det.open ? openDays.add(d) : openDays.delete(d); });
+    out.push(det);
   }
-  if (TRIP.notice) out.push(h("div",{class:"notice",style:"margin-top:8px"}, TRIP.notice));
+  out.push(h("p",{style:"margin:12px 0;color:var(--muted);font-size:13px"},"Main drives come from TomTom with typical traffic, plus about 15% for stops. Miles to confirmed stops are estimates from where each car sleeps that night."));
+  if (TRIP.notice) out.push(h("div",{class:"notice"}, TRIP.notice));
+  // trip update loader
+  const f = h("input",{type:"file", accept:".json,application/json", id:"updFile", style:"max-width:100%"});
+  const msg = h("div",{class:"msg", id:"updMsg"}, importMsg);
+  f.onchange = () => importFile(f.files[0], msg);
+  out.push(h("div",{class:"locbox",style:"margin-top:12px"},
+    h("div",{class:"st"}, h("b",null,"Load trip update. "), "Pick an update file from Claude to change drives, times or stays. Places stay as they are."), f, msg));
   return out;
 }
 function drawLegend(){
@@ -747,27 +863,34 @@ function drawLegend(){
 
 /* ===================== import (first run) ===================== */
 function showImport(){
+  const msg = h("div",{class:"msg", id:"impMsg"});
   $("#view").replaceChildren(h("div",{class:"import"},
     h("div",{class:"notice"}, h("b",null,"No trip loaded yet. "), "Olaf: choose the trip file Claude sent you. This copies the drives, stays and places into the shared database once."),
-    (() => { const f = h("input",{type:"file", accept:".json,application/json", id:"impFile"}); f.onchange = () => importFile(f.files[0]); return f; })(),
-    h("div",{class:"msg", id:"impMsg"})));
+    (() => { const f = h("input",{type:"file", accept:".json,application/json", id:"impFile"}); f.onchange = () => importFile(f.files[0], msg); return f; })(),
+    msg));
   toggleSheet(true);
 }
-async function importFile(file){
-  const msg = $("#impMsg");
+async function importFile(file, msg){
   try {
     const data = JSON.parse(await file.text());
-    if (!data.trip || !Array.isArray(data.places)) throw new Error("This isn't a trip file.");
-    msg.textContent = "Importing…";
+    if (!data.trip) throw new Error("This isn't a trip file from Claude.");
+    msg.textContent = "Loading…";
     await setDoc(doc(db,"trip","main"), data.trip);
-    for (let i=0;i<data.places.length;i+=400) {
-      const b = writeBatch(db);
-      for (const p of data.places.slice(i, i+400)) { const {id, ...rest} = p; b.set(doc(db,"places", id), rest); }
-      await b.commit();
+    let added = 0;
+    if (Array.isArray(data.places)) {
+      const have = new Set(places.map(p => p.id));
+      const fresh = data.places.filter(p => !have.has(p.id));
+      for (let i=0;i<fresh.length;i+=400) {
+        const b = writeBatch(db);
+        for (const p of fresh.slice(i, i+400)) { const {id, ...rest} = p; b.set(doc(db,"places", id), rest); }
+        await b.commit();
+      }
+      added = fresh.length;
     }
-    msg.textContent = "Imported. Loading the trip…";
-    await loadTrip();
-  } catch (e) { msg.textContent = "Import failed: " + (e.message || e.code || e); }
+    importMsg = "✓ Trip updated" + (added ? " and " + added + " places added" : "") + ".";
+    msg.textContent = importMsg; const live = $("#updMsg"); if (live) live.textContent = importMsg;
+    if (!TRIP) await loadTrip();
+  } catch (e) { msg.textContent = "Couldn't load that file: " + (e.message || e.code || e); }
 }
 
 /* ===================== boot ===================== */

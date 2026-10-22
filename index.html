@@ -23,6 +23,7 @@
   <div class="main">
     <div id="map">
       <div class="maptools">
+        <button id="modeBtn" aria-pressed="false" hidden>3D view</button>
         <button id="rideBtn" aria-pressed="false">Ride along</button>
         <button id="fitBtn">Whole trip</button>
         <button id="hereBtn">Where we sleep</button>
@@ -34,8 +35,8 @@
     </div>
     <aside class="panel" id="panel">
       <div class="tabs" role="tablist">
-        <button role="tab" id="tabPlaces" aria-selected="true">Places</button>
         <button role="tab" id="tabAdd" aria-selected="false">+ Add place</button>
+        <button role="tab" id="tabPlaces" aria-selected="true">Places</button>
         <button role="tab" id="tabPlan" aria-selected="false">Drive plan</button>
       </div>
       <div class="view" id="view"></div>

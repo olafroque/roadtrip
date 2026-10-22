@@ -174,3 +174,16 @@ input[type=range]{width:100%;accent-color:var(--sign)}
 .legend{bottom:34px}
 
 .loading{position:absolute;right:max(12px,env(safe-area-inset-right,0px));bottom:34px;background:var(--ink);color:var(--panel);font-size:12px;font-weight:700;padding:4px 10px;border-radius:999px;z-index:3;opacity:.85}
+
+/* itinerary day dropdowns */
+details.day{border:1px solid var(--line);border-radius:10px;margin-bottom:8px;background:var(--panel)}
+details.day > summary{list-style:none;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px}
+details.day > summary::-webkit-details-marker{display:none}
+details.day > summary::before{content:"▸";color:var(--muted);margin-right:2px;transition:transform .15s}
+details.day[open] > summary::before{transform:rotate(90deg)}
+.dsum .dname{font-family:var(--f-display);font-weight:800;font-size:18px;text-transform:uppercase;letter-spacing:.03em;flex:1}
+.dsum .dmi{display:flex;align-items:center;gap:6px;font-family:var(--f-mono);font-size:12.5px;color:var(--muted);white-space:nowrap}
+.dsum .dmi i{width:8px;height:8px;border-radius:50%;display:inline-block}
+.dbody{padding:0 10px 10px;display:grid;gap:4px}
+.dbody .leg{margin-bottom:2px}
+@media (prefers-reduced-motion:reduce){details.day > summary::before{transition:none}}
