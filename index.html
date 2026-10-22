@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<title>Thanksgiving Road Trip</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800&family=Atkinson+Hyperlegible:wght@400;700&family=JetBrains+Mono:wght@500&display=swap">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/cesium@1.130.0/Build/Cesium/Widgets/widgets.css">
+<link rel="stylesheet" href="css/app.css">
+<script>window.CESIUM_BASE_URL = "https://cdn.jsdelivr.net/npm/cesium@1.130.0/Build/Cesium/";</script>
+<script src="https://cdn.jsdelivr.net/npm/cesium@1.130.0/Build/Cesium/Cesium.js"></script>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1 id="title">Road Trip</h1>
+    <span class="sub" id="subtitle"></span>
+    <span class="grow"></span>
+    <button class="hbtn sheet-toggle" id="sheetBtn" aria-expanded="false">Places</button>
+  </header>
+  <div class="main">
+    <div id="map">
+      <div class="maptools">
+        <button id="rideBtn" aria-pressed="false">Ride along</button>
+        <button id="fitBtn">Whole trip</button>
+        <button id="hereBtn">Where we sleep</button>
+      </div>
+      <div class="legend" aria-label="Map key" id="legend"></div>
+      <div class="dropmode" id="dropBar" hidden>Tap the map to drop the pin <button type="button" id="dropCancel">Cancel</button></div>
+      <div class="banner" id="banner" hidden></div>
+    </div>
+    <aside class="panel" id="panel">
+      <div class="tabs" role="tablist">
+        <button role="tab" id="tabPlaces" aria-selected="true">Places</button>
+        <button role="tab" id="tabAdd" aria-selected="false">+ Add place</button>
+        <button role="tab" id="tabPlan" aria-selected="false">Drive plan</button>
+      </div>
+      <div class="view" id="view"></div>
+    </aside>
+  </div>
+  <div class="dock">
+    <div class="dockrow">
+      <button class="play" id="playBtn" aria-label="Play the trip"></button>
+      <div class="days" id="days"></div>
+      <span class="clock" id="clock"></span>
+    </div>
+    <input type="range" id="scrub" min="0" max="1000" step="1" aria-label="Trip time">
+    <div class="cars" id="cars"></div>
+  </div>
+</div>
+
+<div class="gate" id="gate" hidden>
+  <form class="gatecard" id="gateForm">
+    <h2>Thanksgiving Road Trip</h2>
+    <p>Enter your name and the trip passcode. You only do this once on each phone or computer.</p>
+    <label class="f">Your name <input id="gName" autocomplete="given-name" required></label>
+    <label class="f">Trip passcode <input id="gCode" autocomplete="off" required></label>
+    <button class="btn primary" type="submit" id="gBtn">Join the trip</button>
+    <div class="msg" id="gMsg"></div>
+  </form>
+</div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
