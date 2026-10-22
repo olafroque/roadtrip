@@ -210,7 +210,7 @@ function drawRoutes(){
       const col = Cesium.Color.fromCssColorString(gcol(g));
       ents.routes.push(viewer.entities.add({polyline:{
         positions:Cesium.Cartesian3.fromDegreesArray(TRIP.routes[d.route]),
-        width: g === "family" ? 7 : 5, clampToGround:true,
+        width: g === "family" ? 8 : 5, clampToGround:true, zIndex: g === "family" ? 0 : 1,
         material: g === "family" ? col : new Cesium.PolylineDashMaterialProperty({color:col, dashLength:18})
       }}));
     }
@@ -281,6 +281,7 @@ function drawStays(){
       label:{text:s.short || s.name, font:"700 14px Atkinson Hyperlegible, sans-serif", fillColor:Cesium.Color.WHITE, outlineColor:Cesium.Color.BLACK, outlineWidth:4,
         style:Cesium.LabelStyle.FILL_AND_OUTLINE, verticalOrigin:Cesium.VerticalOrigin.TOP, pixelOffset:new Cesium.Cartesian2(0, 14),
         heightReference:Cesium.HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance:Number.POSITIVE_INFINITY,
+        distanceDisplayCondition:new Cesium.DistanceDisplayCondition(0, 25000),
         showBackground:true, backgroundColor:Cesium.Color.fromCssColorString("#13603f")}}));
   }
 }
