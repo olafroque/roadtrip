@@ -160,18 +160,19 @@ async function initMap(){
     banner("Preview mode: flat map. Real 3D appears once the Google Maps key is added.");
   }
   const click = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+  // Drop mode: treat a short press as a tap even if the mouse or finger moved a little.
+  let downAt = null;
+  const onDown = ev => { downAt = Cesium.Cartesian2.clone(ev.position); };
+  const onUp = ev => {
+    if (!dropFor || !downAt) return;
+    const moved = Cesium.Cartesian2.distance(downAt, ev.position); downAt = null;
+    if (moved > 12) return; // that was a drag to move the map
+    dropAt(ev.position);
+  };
+  click.setInputAction(onDown, Cesium.ScreenSpaceEventType.LEFT_DOWN);
+  click.setInputAction(onUp, Cesium.ScreenSpaceEventType.LEFT_UP);
   click.setInputAction(ev => {
-    if (dropFor) {
-      let cart = viewer.scene.pickPositionSupported ? viewer.scene.pickPosition(ev.position) : undefined;
-      if (!cart) cart = viewer.camera.pickEllipsoid(ev.position);
-      if (!cart) return;
-      const c = Cesium.Cartographic.fromCartesian(cart);
-      const ll = [Number(Cesium.Math.toDegrees(c.longitude).toFixed(5)), Number(Cesium.Math.toDegrees(c.latitude).toFixed(5))];
-      const target = dropFor; endDrop();
-      if (target === "draft") { draft.lng = ll[0]; draft.lat = ll[1]; draft.locNote = "Pin dropped on the map"; render(); }
-      else updatePlace(target, {lng:ll[0], lat:ll[1]});
-      return;
-    }
+    if (dropFor) return;
     const picked = viewer.scene.pick(ev.position);
     const id = picked?.id?.properties?.placeId?.getValue();
     if (id) openPlace(id);
@@ -559,7 +560,7 @@ function viewAdd(){
     const data = {name:d.name.trim(), kind:d.kind, who:d.who, status:d.status, day:d.day, time:d.time, dur:120, address:d.address.trim(), note:d.note.trim(),
       url:/^https?:\/\//.test(d.url.trim()) ? d.url.trim() : "", lng:d.lng, lat:d.lat, by:me.uid, byName:me.name, at:new Date().toISOString()};
     if (d.photos) { data.photos = d.photos; data.gid = d.gid; data.gmaps = d.gmaps; }
-    try { const ref = await addDoc(collection(db,"places"), data); newDraft(); openPlace(ref.id); }
+    try { const ref = await addDoc(collection(db,"places"), data); newDraft(); showDraftPin(null); openPlace(ref.id); }
     catch (err) { d.msg = "Couldn't save (" + (err.code || "error") + "). Check your connection and try again."; render(); }
   }},
     h("label",{class:"f"},"Name", inp("aName","name",{placeholder:"e.g. Alta Mesa Taqueria", required:true, autocomplete:"off"})),
@@ -581,8 +582,43 @@ async function lookup(){
   catch (e) { d.msg = "Google search didn't work (" + (e.message || "error") + "). Use Drop pin on map instead."; }
   render();
 }
-function startDrop(target){ dropFor = target; $("#dropBar").hidden = false; toggleSheet(false); }
-function endDrop(){ dropFor = null; $("#dropBar").hidden = true; toggleSheet(true); }
+function groundAt(pos){
+  const Cesium = C();
+  let cart;
+  try { if (viewer.scene.pickPositionSupported) cart = viewer.scene.pickPosition(pos); } catch {}
+  if (!cart || !Cesium.defined(cart)) cart = viewer.camera.pickEllipsoid(pos);
+  if (!cart) return null;
+  const c = Cesium.Cartographic.fromCartesian(cart);
+  if (!c) return null;
+  return [Number(Cesium.Math.toDegrees(c.longitude).toFixed(5)), Number(Cesium.Math.toDegrees(c.latitude).toFixed(5))];
+}
+let draftEnt = null;
+function showDraftPin(ll){
+  const Cesium = C();
+  if (draftEnt) viewer.entities.remove(draftEnt);
+  draftEnt = ll ? viewer.entities.add({position:Cesium.Cartesian3.fromDegrees(ll[0], ll[1]),
+    billboard:{image:pinImage(draft?.kind || "sight", "#13603f", false), width:40, height:40, heightReference:Cesium.HeightReference.CLAMP_TO_GROUND,
+      disableDepthTestDistance:Number.POSITIVE_INFINITY, pixelOffset:new Cesium.Cartesian2(0, -24)},
+    label:{text:(draft?.name || "New place") + " (not saved yet)", font:"700 13px Atkinson Hyperlegible, sans-serif", fillColor:Cesium.Color.WHITE,
+      showBackground:true, backgroundColor:Cesium.Color.fromCssColorString("#13603f"), pixelOffset:new Cesium.Cartesian2(0, -52),
+      heightReference:Cesium.HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance:Number.POSITIVE_INFINITY}}) : null;
+}
+function dropAt(pos){
+  const ll = groundAt(pos);
+  if (!ll) { $("#dropBar").firstChild.textContent = "That spot is sky. Tap on the ground. "; return; }
+  const target = dropFor; endDrop();
+  if (target === "draft") {
+    draft.lng = ll[0]; draft.lat = ll[1]; draft.locNote = "Pin dropped on the map. Press Add to the map to save it.";
+    showDraftPin(ll); tab = "add"; render();
+  } else {
+    updatePlace(target, {lng:ll[0], lat:ll[1]}).then(() => { tab = "place"; selId = target; render(); });
+  }
+}
+function startDrop(target){
+  dropFor = target; $("#dropBar").firstChild.textContent = "Tap the map where the pin goes. ";
+  $("#dropBar").hidden = false; viewer && (viewer.scene.canvas.style.cursor = "crosshair"); toggleSheet(false);
+}
+function endDrop(){ dropFor = null; $("#dropBar").hidden = true; viewer && (viewer.scene.canvas.style.cursor = ""); toggleSheet(true); }
 $("#dropCancel").onclick = () => endDrop();
 async function updatePlace(id, patch){
   try { await updateDoc(doc(db,"places",id), patch); }
