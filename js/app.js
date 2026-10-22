@@ -1,7 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, onSnapshot, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
-import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610221323";
+import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610221325";
 
 /* ===================== helpers ===================== */
 const $ = s => document.querySelector(s);
@@ -164,14 +164,13 @@ async function initMap(){
   });
   viewer.camera.percentageChanged = 0.1;
   viewer.camera.changed.addEventListener(() => rescaleModels(false));
-  // Board map: free street map with labels (OpenStreetMap data, CARTO style). No Google usage.
+  // Board map: free street map with labels (OpenStreetMap). No Google usage.
   const g = viewer.scene.globe;
   g.baseColor = Cesium.Color.fromCssColorString("#aad3df");
   g.showGroundAtmosphere = false;
   g.enableLighting = false;
-  viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
-    url:"https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png", subdomains:["a","b","c","d"],
-    maximumLevel:19, credit:new Cesium.Credit("© OpenStreetMap contributors © CARTO", true)}));
+  // OpenStreetMap's standard tiles: free, no key, street names and business labels.
+  viewer.imageryLayers.addImageryProvider(new Cesium.OpenStreetMapImageryProvider({url:"https://tile.openstreetmap.org/", maximumLevel:19}));
   const click = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
   // Drop mode: treat a short press as a tap even if the mouse or finger moved a little.
   let downAt = null;
