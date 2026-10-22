@@ -12,4 +12,4 @@ export const firebaseConfig = {
 
 // Google Maps Platform key (Map Tiles API + Places API (New)).
 // Leave empty for preview mode: flat OpenStreetMap imagery, no Google search or photos.
-export const MAPS_KEY = "";
+export const MAPS_KEY = "AIzaSyApwQRQRz7qdU-2_1MVAtqVfVN3A0GGqEs";
