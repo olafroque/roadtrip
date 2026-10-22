@@ -141,13 +141,35 @@ async function initMap(){
   viewer = new Cesium.Viewer("map", {
     baseLayer:false, baseLayerPicker:false, geocoder:false, homeButton:false, sceneModePicker:false,
     navigationHelpButton:false, animation:false, timeline:false, fullscreenButton:false,
-    infoBox:false, selectionIndicator:false
+    infoBox:false, selectionIndicator:false,
+    requestRenderMode:true, maximumRenderTimeChange:Infinity   // only redraw when something changes
+  });
+  // Keep the camera over California so it doesn't stream tiles for the rest of the world.
+  const cam = viewer.scene.screenSpaceCameraController;
+  cam.maximumZoomDistance = 750000;
+  viewer.camera.moveEnd.addEventListener(() => {
+    const c = Cesium.Cartographic.fromCartesian(viewer.camera.position);
+    const lon = Cesium.Math.toDegrees(c.longitude), lat = Cesium.Math.toDegrees(c.latitude);
+    const cl = [Math.min(-113.8, Math.max(-125.2, lon)), Math.min(42.3, Math.max(31.0, lat))];
+    if (Math.abs(cl[0]-lon) > 0.01 || Math.abs(cl[1]-lat) > 0.01)
+      viewer.camera.flyTo({destination:Cesium.Cartesian3.fromDegrees(cl[0], cl[1], Math.min(c.height, 700000)),
+        orientation:{heading:viewer.camera.heading, pitch:viewer.camera.pitch, roll:0}, duration:0.8});
   });
   viewer.scene.screenSpaceCameraController.enableCollisionDetection = true;
   viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#1d2a33");
   if (MAPS_KEY) {
     try {
-      tileset = await Cesium.createGooglePhotorealistic3DTileset({key:MAPS_KEY, onlyUsingWithGoogleGeocoder:true}, {showCreditsOnScreen:true, maximumScreenSpaceError:16});
+      const LOW = matchMedia("(max-width: 820px), (pointer: coarse)").matches;
+      tileset = await Cesium.createGooglePhotorealistic3DTileset({key:MAPS_KEY, onlyUsingWithGoogleGeocoder:true}, {
+        showCreditsOnScreen:true,
+        maximumScreenSpaceError: LOW ? 32 : 20,     // less detail = fewer tiles; phones get the lighter setting
+        dynamicScreenSpaceError:true,               // low detail toward the horizon
+        foveatedScreenSpaceError:true,              // load the center of the screen first
+        cacheBytes: (LOW ? 256 : 768) * 1024 * 1024
+      });
+      const chip = $("#loading");
+      tileset.loadProgress.addEventListener((pending, processing) => { chip.hidden = pending + processing === 0; });
+      tileset.allTilesLoaded.addEventListener(() => { chip.hidden = true; });
       viewer.scene.primitives.add(tileset);
       viewer.scene.globe.show = false;
       viewer.scene.skyAtmosphere.show = true;
@@ -187,8 +209,8 @@ function banner(text){ const b = $("#banner"); b.textContent = text; b.hidden = 
 function fitTrip(dur = 1.5){
   if (!viewer) return;
   const Cesium = C();
-  viewer.camera.flyTo({destination:Cesium.Cartesian3.fromDegrees(-120.4, 32.2, 520000),
-    orientation:{heading:Cesium.Math.toRadians(-28), pitch:Cesium.Math.toRadians(-48), roll:0}, duration:dur});
+  viewer.camera.flyTo({destination:Cesium.Cartesian3.fromDegrees(-120.2, 33.0, 560000),
+    orientation:{heading:Cesium.Math.toRadians(-20), pitch:Cesium.Math.toRadians(-62), roll:0}, duration:dur});
 }
 function flyTo(ll, range = 2500, dur = 1.4){
   if (!viewer) return;
@@ -486,6 +508,33 @@ async function placesSearch(q){
   return (j.places || []).map(p => ({gid:p.id, name:p.displayName?.text || q, addr:p.formattedAddress || "", ll:[p.location.longitude, p.location.latitude],
     photos:(p.photos || []).slice(0,6).map(x => ({n:x.name, by:x.authorAttributions?.[0]?.displayName || ""})), gmaps:p.googleMapsUri || ""}));
 }
+async function placesNearby(ll, radius){
+  const r = await fetch("https://places.googleapis.com/v1/places:searchNearby", {method:"POST",
+    headers:{"Content-Type":"application/json","X-Goog-Api-Key":MAPS_KEY,"X-Goog-FieldMask":PLACES_FIELDS},
+    body:JSON.stringify({maxResultCount:6, rankPreference:"DISTANCE", locationRestriction:{circle:{center:{latitude:ll[1], longitude:ll[0]}, radius}}})});
+  if (!r.ok) throw new Error("Lookup failed (" + r.status + ")");
+  const j = await r.json();
+  return (j.places || []).map(p => ({gid:p.id, name:p.displayName?.text || "", addr:p.formattedAddress || "", ll:[p.location.longitude, p.location.latitude],
+    photos:(p.photos || []).slice(0,6).map(x => ({n:x.name, by:x.authorAttributions?.[0]?.displayName || ""})), gmaps:p.googleMapsUri || ""}));
+}
+async function whatsHere(ll){
+  if (!MAPS_KEY) return;
+  draft.nearby = "loading"; render();
+  try {
+    let res = await placesNearby(ll, 150);
+    if (!res.length) res = await placesNearby(ll, 1500);
+    draft.nearby = res;
+  } catch (e) { draft.nearby = {error: e.message || "Lookup failed"}; }
+  if (tab === "add") render();
+}
+function coordLine(ll){
+  const txt = ll[1].toFixed(5) + ", " + ll[0].toFixed(5);
+  const out = h("span",{class:"dist"}, txt);
+  const btn = h("button",{type:"button", class:"btn", style:"padding:3px 8px;font-size:12px;margin-left:8px", onclick:async () => {
+    try { await navigator.clipboard.writeText(txt); btn.textContent = "Copied"; } catch { const r = document.createRange(); r.selectNodeContents(out); getSelection().removeAllRanges(); getSelection().addRange(r); btn.textContent = "Selected"; }
+  }}, "Copy");
+  return h("span",null, out, btn);
+}
 const photoUrl = n => `https://places.googleapis.com/v1/${n}/media?maxHeightPx=400&key=${encodeURIComponent(MAPS_KEY)}`;
 const photoTried = new Set();
 async function ensurePhotos(p){
@@ -516,6 +565,7 @@ function viewPlace(){
   add("For", G()[p.who]?.label);
   add("When", p.day ? dayName(p.day) + (p.time ? " · " + fmtT.format(placeStart(p)) : "") : "No day yet");
   add("Address", p.address);
+  if (p.lng != null) kv.append(h("dt",null,"Coordinates"), h("dd",null, coordLine([p.lng, p.lat])));
   add("Notes", p.note);
   if (p.url) kv.append(h("dt",null,"Link"), h("dd",null, h("a",{href:p.url,target:"_blank",rel:"noopener"}, p.url.replace(/^https?:\/\/(www\.)?/,"").replace(/\/$/,""))));
   dt.append(kv);
@@ -550,9 +600,17 @@ function viewAdd(){
   const loc = h("div",{class:"locbox"});
   loc.append(h("div",{class:"st"}, d.lng != null ? h("span",null, h("b",{style:"color:var(--ok)"},"✓ Location set. "), d.locNote || "") : h("span",{style:"color:var(--muted)"}, MAPS_KEY ? "Search Google for the place, or drop a pin." : "Drop a pin on the map. Google search turns on once the Maps key is added.")));
   loc.append(h("div",{class:"btns",style:"margin-top:0"}, MAPS_KEY ? h("button",{type:"button", class:"btn", onclick:lookup}, "Search Google") : null, h("button",{type:"button", class:"btn", onclick:() => startDrop("draft")}, "Drop pin on map")));
+  if (d.lng != null) loc.append(h("div",{class:"st"}, "Coordinates: ", coordLine([d.lng, d.lat])));
+  if (d.nearby === "loading") loc.append(h("div",{class:"st",style:"color:var(--muted)"}, "Looking up what's here…"));
+  else if (d.nearby?.error) loc.append(h("div",{class:"msg"}, "Couldn't look up this spot (" + d.nearby.error + "). The pin is still set."));
+  else if (Array.isArray(d.nearby)) loc.append(h("div",{class:"st",style:"font-weight:700"}, d.nearby.length ? "What's here? Tap one to use it:" : "No businesses or landmarks right here. Name it yourself."),
+    h("div",{class:"res"}, d.nearby.map(r => h("button",{type:"button", onclick:() => {
+      d.lng = r.ll[0]; d.lat = r.ll[1]; d.name = r.name; d.address = r.addr; d.locNote = r.addr; d.photos = r.photos; d.gid = r.gid; d.gmaps = r.gmaps; d.nearby = null;
+      showDraftPin(r.ll); render(); }},
+      h("b",null, r.name), r.addr + " · " + (m => m < 0.2 ? Math.round(m*5280) + " ft" : miles(m))(hav([d.lng, d.lat], r.ll)) + " away"))));
   if (d.msg) loc.append(h("div",{class:"msg"}, d.msg));
   if (d.results) loc.append(h("div",{class:"res"}, d.results.length ? d.results.map(r => h("button",{type:"button", onclick:() => {
-    d.lng = r.ll[0]; d.lat = r.ll[1]; d.address = r.addr; if (!d.name) d.name = r.name; d.locNote = r.addr; d.photos = r.photos; d.gid = r.gid; d.gmaps = r.gmaps; d.results = null; render(); }},
+    d.lng = r.ll[0]; d.lat = r.ll[1]; d.address = r.addr; if (!d.name) d.name = r.name; d.locNote = r.addr; d.photos = r.photos; d.gid = r.gid; d.gmaps = r.gmaps; d.results = null; d.nearby = null; showDraftPin(r.ll); flyTo(r.ll, 1200); render(); }},
     h("b",null, r.name), r.addr)) : h("div",{class:"msg"},"No matches. Try adding the city.")));
   const form = h("form",{class:"add", onsubmit:async e => {
     e.preventDefault();
@@ -609,7 +667,7 @@ function dropAt(pos){
   const target = dropFor; endDrop();
   if (target === "draft") {
     draft.lng = ll[0]; draft.lat = ll[1]; draft.locNote = "Pin dropped on the map. Press Add to the map to save it.";
-    showDraftPin(ll); tab = "add"; render();
+    draft.nearby = null; showDraftPin(ll); tab = "add"; render(); whatsHere(ll);
   } else {
     updatePlace(target, {lng:ll[0], lat:ll[1]}).then(() => { tab = "place"; selId = target; render(); });
   }

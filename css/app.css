@@ -172,3 +172,5 @@ input[type=range]{width:100%;accent-color:var(--sign)}
 [hidden]{display:none!important}
 
 .legend{bottom:34px}
+
+.loading{position:absolute;right:max(12px,env(safe-area-inset-right,0px));bottom:34px;background:var(--ink);color:var(--panel);font-size:12px;font-weight:700;padding:4px 10px;border-radius:999px;z-index:3;opacity:.85}
