@@ -1,7 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, onSnapshot, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
-import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610221759";
+import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610221805";
 
 /* ===================== helpers ===================== */
 const $ = s => document.querySelector(s);
@@ -343,9 +343,25 @@ function addModel(key, kind, ll, accent, placeId){
   modelSpecs.set(key, {kind, ll, accent, placeId});
   buildModel(key, modelSpecs.get(key));
 }
+/* Hand-built low-poly .glb pieces (tools/lowpoly.py), keyed by place id. Size: model meters / GLB_M = game units. */
+const GLB = { aquarium: "models/aquarium.glb" };
+const GLB_M = 4.4;
 function buildModel(key, s){
   const Cesium = C();
-  const old = ents.models.get(key); if (old) for (const e of old) viewer.entities.remove(e);
+  const old = ents.models.get(key);
+  if (s.placeId && GLB[s.placeId]) {
+    if (old && old.glb) return;   // already on the map; its scale follows U on its own
+    const pos = Cesium.Cartesian3.fromDegrees(s.ll[0], s.ll[1]);
+    const e = viewer.entities.add({position:pos, properties:{placeId:s.placeId},
+      orientation:Cesium.Transforms.headingPitchRollQuaternion(pos, new Cesium.HeadingPitchRoll(Math.PI/2, 0, 0)),   // front faces south
+      model:{uri:GLB[s.placeId] + "?v=1", scale:new Cesium.CallbackProperty(() => U / GLB_M, false), heightReference:Cesium.HeightReference.CLAMP_TO_GROUND,
+        shadows:Cesium.ShadowMode.CAST_ONLY, silhouetteColor:Cesium.Color.fromCssColorString(s.accent || "#13603f"), silhouetteSize:2}});
+    const list = [e]; list.glb = true;
+    ents.models.set(key, list);
+    if (old) for (const x of old) viewer.entities.remove(x);
+    return;
+  }
+  if (old) for (const e of old) viewer.entities.remove(e);
   const list = [];
   const mLon = U / (111320*Math.cos(s.ll[1]*Math.PI/180)), mLat = U / 110540;
   const parts = partsFor(s.kind, s.accent, s.placeId).map(p => ({...p, z:p.z + 0.22}));
