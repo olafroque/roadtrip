@@ -2,7 +2,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/fireba
 import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, onSnapshot, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-storage.js";
-import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610222052";
+import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610230935";
 
 /* ===================== helpers ===================== */
 const $ = s => document.querySelector(s);
@@ -364,7 +364,7 @@ function buildModel(key, s){
     const pos = Cesium.Cartesian3.fromDegrees(s.ll[0], s.ll[1]);
     const e = viewer.entities.add({position:pos, properties:s.placeId ? {placeId:s.placeId} : undefined,
       orientation:Cesium.Transforms.headingPitchRollQuaternion(pos, new Cesium.HeadingPitchRoll(Cesium.Math.toRadians(gl.heading || 0), 0, 0)),
-      model:{uri:gl.uri + "?v=202610222052", scale:new Cesium.CallbackProperty(() => U * gl.size / gl.width, false), heightReference:Cesium.HeightReference.CLAMP_TO_GROUND,
+      model:{uri:gl.uri + "?v=202610230935", scale:new Cesium.CallbackProperty(() => U * gl.size / gl.width, false), heightReference:Cesium.HeightReference.CLAMP_TO_GROUND,
         shadows:Cesium.ShadowMode.CAST_ONLY, silhouetteColor:Cesium.Color.fromCssColorString(s.accent || "#13603f"), silhouetteSize:2}});
     const list = [e]; list.glb = true;
     ents.models.set(key, list);
