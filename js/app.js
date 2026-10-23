@@ -2,7 +2,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/fireba
 import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, onSnapshot, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-storage.js";
-import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610230935";
+import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610231018";
 
 /* ===================== helpers ===================== */
 const $ = s => document.querySelector(s);
@@ -364,7 +364,7 @@ function buildModel(key, s){
     const pos = Cesium.Cartesian3.fromDegrees(s.ll[0], s.ll[1]);
     const e = viewer.entities.add({position:pos, properties:s.placeId ? {placeId:s.placeId} : undefined,
       orientation:Cesium.Transforms.headingPitchRollQuaternion(pos, new Cesium.HeadingPitchRoll(Cesium.Math.toRadians(gl.heading || 0), 0, 0)),
-      model:{uri:gl.uri + "?v=202610230935", scale:new Cesium.CallbackProperty(() => U * gl.size / gl.width, false), heightReference:Cesium.HeightReference.CLAMP_TO_GROUND,
+      model:{uri:gl.uri + "?v=202610231018", scale:new Cesium.CallbackProperty(() => U * gl.size / gl.width, false), heightReference:Cesium.HeightReference.CLAMP_TO_GROUND,
         shadows:Cesium.ShadowMode.CAST_ONLY, silhouetteColor:Cesium.Color.fromCssColorString(s.accent || "#13603f"), silhouetteSize:2}});
     const list = [e]; list.glb = true;
     ents.models.set(key, list);
@@ -1254,7 +1254,7 @@ async function deletePhoto(p){
 // 5 quick pop-ups that point at the real buttons. Shows once per device; "How it works" replays it.
 const TOUR = [
   {el:"#map", sheet:false, title:"This is the trip board",
-    text:"Pink is our car, blue is Amber's. Hollow pins are ideas. 3D pieces are confirmed stops and where we sleep. Press ▶ at the bottom to watch both cars drive the week."},
+    text:"Pink is the Roques, blue is the Hanleys. Hollow pins are ideas. 3D pieces are confirmed stops and where we sleep. Press ▶ at the bottom to watch both cars drive the week."},
   {el:"#tabAdd", sheet:true, title:"Add a place",
     text:"Search Google or drop a pin on the map. Mark it Idea, Maybe or Confirmed so everyone knows where it stands."},
   {el:"#tabPlaces", sheet:true, title:"See every idea",

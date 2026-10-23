@@ -123,7 +123,7 @@ const lerp = (a,b,u) => a + (b-a)*u;
 /* scenes: caption + camera + day */
 const SCENES = [
   {t:0,    k:"Nov 21–28", h:"Thanksgiving<br>Road Trip", p:"Two cars. One board. Everything we plan lives here."},
-  {t:4.5,  k:"Saturday", h:"<span class='p'>Pink</span> and <span class='b'>blue</span> head north", p:"Pink is Olaf, Page, Rio & Isla. Blue is Amber, Kaleb & Bob. Press play in the app to watch them drive."},
+  {t:4.5,  k:"Saturday", h:"<span class='p'>Pink</span> and <span class='b'>blue</span> head north", p:"Pink is the Roques. Blue is the Hanleys. Press play in the app to watch them drive."},
   {t:12,   k:"Add a place", h:"Drop ideas on the board", p:"Mark each one Idea, Maybe or Confirmed. Everyone sees it right away."},
   {t:20.5, k:"Wednesday", h:"Down to Monterey", p:"Confirmed stops and where we sleep stand up as game pieces."},
   {t:27,   k:"Photos", h:"Snap it. It lands where you took it.", p:"Everyone on the trip can see and download the full photo."},
@@ -174,8 +174,8 @@ const MK = {};
 function piece(id, html){ const d = document.createElement("div"); d.className = "pc"; d.innerHTML = `<div class="up">${html}</div>`; $("#pieces").append(d); P[id] = d;
   const m = document.createElement("div"); m.className = "mk"; $("#marks").append(m); MK[id] = m; return d; }
 const ST = {idea:["Idea","#5b6b62"], maybe:["Maybe","#b35c00"], confirmed:["Confirmed","#2f9e44"]};
-piece("carFam", `<div class="lbl" style="background:#d6336c;color:#fff">Our car</div><div class="car" style="background:#d6336c">${svgCar("#d6336c")}</div><span class="shadow"></span>`);
-piece("carFri", `<div class="lbl" style="background:#1971c2;color:#fff">Amber's car</div><div class="car" style="background:#1971c2">${svgCar("#1971c2")}</div><span class="shadow"></span>`);
+piece("carFam", `<div class="lbl" style="background:#d6336c;color:#fff">Roques' car</div><div class="car" style="background:#d6336c">${svgCar("#d6336c")}</div><span class="shadow"></span>`);
+piece("carFri", `<div class="lbl" style="background:#1971c2;color:#fff">Hanleys' car</div><div class="car" style="background:#1971c2">${svgCar("#1971c2")}</div><span class="shadow"></span>`);
 piece("oslovar", `<div class="lbl">Oslovar House</div>${building("house")}`);
 piece("stargazer", `<div class="lbl">Stargazer Hotel</div>${building("hotel")}`);
 piece("beach", `<div class="lbl">Monterey Beach Hotel</div>${building("hotel")}`);
