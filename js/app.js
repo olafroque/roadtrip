@@ -1,7 +1,8 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, onSnapshot, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
-import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610221832";
+import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-storage.js";
+import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610221846";
 
 /* ===================== helpers ===================== */
 const $ = s => document.querySelector(s);
@@ -196,10 +197,14 @@ async function initMap(){
     if (dropFor) return;
     const picked = viewer.scene.pick(ev.position);
     if (Array.isArray(picked?.id)) { zoomToEntities(picked.id); return; }
+    const ph = picked?.id?.properties?.photoId?.getValue();
+    if (ph) { openPhoto(ph); return; }
     const id = picked?.id?.properties?.placeId?.getValue();
     if (id) openPlace(id);
   }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
   initPins();
+  initPhotoLayer();
+  $("#photoBtn").setAttribute("aria-pressed", String(showPhotos));
   $("#modeBtn").hidden = !MAPS_KEY;
   await setMode(mode);
   fitTrip(0);
@@ -359,7 +364,7 @@ function buildModel(key, s){
     const pos = Cesium.Cartesian3.fromDegrees(s.ll[0], s.ll[1]);
     const e = viewer.entities.add({position:pos, properties:s.placeId ? {placeId:s.placeId} : undefined,
       orientation:Cesium.Transforms.headingPitchRollQuaternion(pos, new Cesium.HeadingPitchRoll(Cesium.Math.toRadians(gl.heading || 0), 0, 0)),
-      model:{uri:gl.uri + "?v=2", scale:new Cesium.CallbackProperty(() => U * gl.size / gl.width, false), heightReference:Cesium.HeightReference.CLAMP_TO_GROUND,
+      model:{uri:gl.uri + "?v=202610221846", scale:new Cesium.CallbackProperty(() => U * gl.size / gl.width, false), heightReference:Cesium.HeightReference.CLAMP_TO_GROUND,
         shadows:Cesium.ShadowMode.CAST_ONLY, silhouetteColor:Cesium.Color.fromCssColorString(s.accent || "#13603f"), silhouetteSize:2}});
     const list = [e]; list.glb = true;
     ents.models.set(key, list);
@@ -579,6 +584,10 @@ function setTab(n){ tab = n; render(); }
 $("#tabPlaces").onclick = () => { selId = null; setTab("places"); syncPins(); };
 $("#tabAdd").onclick = () => { if (!draft) newDraft(); setTab("add"); };
 $("#tabPlan").onclick = () => setTab("plan");
+$("#tabPhotos").onclick = () => setTab("photos");
+$("#photoBtn").onclick = () => togglePhotos();
+$("#pv").addEventListener("click", e => { if (e.target.id === "pv") closePhoto(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape" && pvId) closePhoto(); });
 $("#sheetBtn").onclick = () => toggleSheet();
 function toggleSheet(force){
   const p = $("#panel"); const open = force ?? !p.classList.contains("open");
@@ -586,11 +595,12 @@ function toggleSheet(force){
 }
 function render(){
   if (!TRIP) return;
-  for (const [id, n] of [["#tabPlaces","places"],["#tabAdd","add"],["#tabPlan","plan"]]) $(id).setAttribute("aria-selected", String(tab === n || (n === "places" && tab === "place")));
+  for (const [id, n] of [["#tabPlaces","places"],["#tabAdd","add"],["#tabPlan","plan"],["#tabPhotos","photos"]]) $(id).setAttribute("aria-selected", String(tab === n || (n === "places" && tab === "place")));
   const v = $("#view"); v.replaceChildren();
   if (tab === "places") v.append(...viewPlaces());
   else if (tab === "place") v.append(...viewPlace());
   else if (tab === "add") v.append(...viewAdd());
+  else if (tab === "photos") v.append(...viewPhotos());
   else v.append(...viewPlan());
 }
 function icon(p){
@@ -848,6 +858,7 @@ function dropAt(pos){
   const ll = groundAt(pos);
   if (!ll) { $("#dropBar").firstChild.textContent = "That spot is sky. Tap on the ground. "; return; }
   const target = dropFor; endDrop();
+  if (target === "photo") { updateDoc(doc(db,"photos",dropPhoto), {lat:ll[1], lng:ll[0], src:"manual"}).catch(() => banner("Couldn't move that photo.")); return; }
   if (target === "draft") {
     draft.lng = ll[0]; draft.lat = ll[1]; draft.locNote = "Pin dropped on the map. Press Add to the map to save it.";
     draft.nearby = null; showDraftPin(ll); tab = "add"; render(); whatsHere(ll);
@@ -953,6 +964,188 @@ function drawLegend(){
     h("div",{style:"color:var(--muted)"},"Hollow pin = idea · solid = maybe or confirmed · 3D piece = confirmed or where you sleep"));
 }
 
+/* ===================== shared trip photos ===================== */
+// Each photo: Firestore photos/{id} (who, when, where, urls, a tiny round marker image)
+// + Firebase Storage photos/{id}/full.jpg (download size) and thumb.jpg (gallery size).
+let photos = [], photoDS = null, showPhotos = true, uploads = [], pvId = null;
+try { showPhotos = localStorage.getItem("showPhotos") !== "0"; } catch {}
+let myCar = "family";
+try { myCar = localStorage.getItem("myCar") || "family"; } catch {}
+const storage = getStorage(fb);
+
+function initPhotoLayer(){
+  const Cesium = C();
+  photoDS = new Cesium.CustomDataSource("photos");
+  viewer.dataSources.add(photoDS);
+  photoDS.show = showPhotos;
+  const cl = photoDS.clustering;
+  cl.enabled = true; cl.pixelRange = 30; cl.minimumClusterSize = 3;
+  cl.clusterEvent.addEventListener((list, cluster) => {
+    cluster.label.show = false; cluster.billboard.show = true;
+    const s = `<svg xmlns="http://www.w3.org/2000/svg" width="104" height="44" viewBox="0 0 104 44"><rect x="2" y="2" width="100" height="40" rx="20" fill="#ffffff" stroke="#17221d" stroke-width="3"/><text x="52" y="28" text-anchor="middle" font-family="Atkinson Hyperlegible, Arial, sans-serif" font-size="18" font-weight="700" fill="#17221d">📷 ${list.length}</text></svg>`;
+    cluster.billboard.image = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(s);
+    cluster.billboard.width = 78; cluster.billboard.height = 33;
+    cluster.billboard.disableDepthTestDistance = Number.POSITIVE_INFINITY;
+    cluster.billboard.id = list;
+  });
+}
+function syncPhotoMarkers(){
+  if (!photoDS) return;
+  const Cesium = C();
+  photoDS.entities.removeAll();
+  for (const p of photos) {
+    if (p.lng == null || !p.marker) continue;
+    photoDS.entities.add({position:Cesium.Cartesian3.fromDegrees(p.lng, p.lat), properties:{photoId:p.id},
+      billboard:{image:p.marker, width:40, height:40, heightReference:Cesium.HeightReference.CLAMP_TO_GROUND,
+        disableDepthTestDistance:Number.POSITIVE_INFINITY, verticalOrigin:Cesium.VerticalOrigin.BOTTOM}});
+  }
+  viewer.scene.requestRender();
+}
+function togglePhotos(){
+  showPhotos = !showPhotos;
+  try { localStorage.setItem("showPhotos", showPhotos ? "1" : "0"); } catch {}
+  if (photoDS) photoDS.show = showPhotos;
+  $("#photoBtn").setAttribute("aria-pressed", String(showPhotos));
+  viewer?.scene.requestRender();
+}
+
+/* image helpers */
+async function decodeImage(file){
+  try { return await createImageBitmap(file, {imageOrientation:"from-image"}); }
+  catch { throw new Error("This photo format can't be opened in the browser. On iPhone, pick it from Photos (it converts automatically); on a computer, save it as JPG first."); }
+}
+function toJpeg(bmp, maxSide, quality){
+  const k = Math.min(1, maxSide / Math.max(bmp.width, bmp.height));
+  const c = document.createElement("canvas"); c.width = Math.round(bmp.width*k); c.height = Math.round(bmp.height*k);
+  c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+  return new Promise((res, rej) => c.toBlob(b => b ? res({blob:b, w:c.width, h:c.height}) : rej(new Error("Couldn't shrink the photo.")), "image/jpeg", quality));
+}
+function markerDataUrl(bmp, ring){
+  const S = 80, c = document.createElement("canvas"); c.width = c.height = S;
+  const x = c.getContext("2d"), side = Math.min(bmp.width, bmp.height);
+  x.beginPath(); x.arc(S/2, S/2, S/2 - 6, 0, Math.PI*2); x.closePath(); x.save(); x.clip();
+  x.drawImage(bmp, (bmp.width - side)/2, (bmp.height - side)/2, side, side, 0, 0, S, S); x.restore();
+  x.lineWidth = 7; x.strokeStyle = ring; x.beginPath(); x.arc(S/2, S/2, S/2 - 5, 0, Math.PI*2); x.stroke();
+  return c.toDataURL("image/png");
+}
+async function readMeta(file){
+  const out = {lat:null, lng:null, taken:null};
+  try {
+    if (window.exifr) {
+      const d = await window.exifr.parse(file).catch(() => null);
+      if (d && isFinite(d.latitude) && isFinite(d.longitude)) { out.lat = d.latitude; out.lng = d.longitude; }
+      const dt = d?.DateTimeOriginal || d?.CreateDate;
+      if (dt instanceof Date && !isNaN(dt)) out.taken = dt.getTime();
+    }
+  } catch {}
+  if (!out.taken && file.lastModified) out.taken = file.lastModified;
+  return out;
+}
+
+async function uploadOne(file, item){
+  item.state = "Reading…"; renderUploads();
+  const meta = await readMeta(file);
+  let lat = meta.lat, lng = meta.lng, src = "gps";
+  if (lat == null) {
+    // no location in the photo: use where this car was at that moment on the trip timeline
+    const when = meta.taken && meta.taken >= START && meta.taken <= END ? meta.taken : null;
+    const c = carAt(myCar, when || t);
+    lat = c.ll[1]; lng = c.ll[0]; src = when ? "timeline" : "now";
+  }
+  const bmp = await decodeImage(file);
+  item.state = "Shrinking…"; renderUploads();
+  const full = await toJpeg(bmp, 2560, 0.86), thumb = await toJpeg(bmp, 520, 0.8);
+  const marker = markerDataUrl(bmp, gcol(myCar));
+  const id = doc(collection(db, "photos")).id;
+  const stamp = new Date(meta.taken || Date.now());
+  const fname = "trip-" + stamp.toISOString().slice(0,10) + "-" + id.slice(0,5) + ".jpg";
+  item.state = "Uploading…"; renderUploads();
+  const fr = sref(storage, `photos/${id}/full.jpg`), tr = sref(storage, `photos/${id}/thumb.jpg`);
+  await uploadBytes(fr, full.blob, {contentType:"image/jpeg", contentDisposition:`attachment; filename="${fname}"`, cacheControl:"public,max-age=31536000"});
+  await uploadBytes(tr, thumb.blob, {contentType:"image/jpeg", cacheControl:"public,max-age=31536000"});
+  const [fullUrl, thumbUrl] = await Promise.all([getDownloadURL(fr), getDownloadURL(tr)]);
+  await setDoc(doc(db, "photos", id), {by:me.uid, byName:me.name, car:myCar, at:new Date().toISOString(), taken:meta.taken || null,
+    lat, lng, src, w:full.w, h:full.h, fullUrl, thumbUrl, marker, caption:"", fname});
+  item.state = "✓ Added"; renderUploads();
+}
+async function uploadFiles(files){
+  const list = [...files].map(f => ({name:f.name, state:"Waiting"}));
+  uploads = list.concat(uploads).slice(0, 30); renderUploads();
+  for (let i=0;i<files.length;i++) {
+    try { await uploadOne(files[i], list[i]); }
+    catch (e) { list[i].state = "✗ " + (e.code === "storage/unauthorized" ? "Not allowed. Rejoin with the passcode." : e.code === "storage/quota-exceeded" ? "Photo storage is full." : (e.message || "Upload failed")); renderUploads(); }
+  }
+}
+function renderUploads(){
+  const box = $("#uploadList"); if (!box) return;
+  box.replaceChildren(...uploads.slice(0, 8).map(u => h("div",{class:"crow"}, h("span",{class:"cn"}, u.name), h("span",{class:"cm"}, u.state))));
+}
+
+/* Photos tab */
+function viewPhotos(){
+  const out = [];
+  const carSel = h("select",{id:"myCar"}, ...["family","friends"].map(g => h("option",{value:g, selected:myCar === g}, G()[g].label)));
+  carSel.onchange = () => { myCar = carSel.value; try { localStorage.setItem("myCar", myCar); } catch {} };
+  const fileIn = h("input",{type:"file", accept:"image/*", multiple:true, id:"photoFiles", hidden:true});
+  fileIn.onchange = () => { const fs = [...fileIn.files]; fileIn.value = ""; if (fs.length) uploadFiles(fs); };
+  out.push(h("div",{class:"locbox"},
+    h("div",{class:"st"}, h("b",null,"Add trip photos. "), "They land on the map where they were taken. Everyone on the trip can see and download them."),
+    h("label",{class:"f"},"Whose camera", carSel),
+    h("button",{type:"button", class:"btn primary", style:"justify-content:center;padding:11px", onclick:() => fileIn.click()}, "📷  Choose photos"),
+    fileIn, h("div",{id:"uploadList", style:"display:grid;gap:2px"})));
+  setTimeout(renderUploads);
+  if (!photos.length) { out.push(h("div",{class:"empty"}, h("b",null,"No photos yet"), "The first one you add shows up here and on the map.")); return out; }
+  const groups = {};
+  for (const p of photos) (groups[p.taken ? dayKey(p.taken) : "unknown"] ||= []).push(p);
+  const keys = Object.keys(groups).sort();
+  out.push(h("div",{class:"dayhead",style:"margin-top:14px"}, photos.length + " photo" + (photos.length === 1 ? "" : "s")));
+  for (const k of keys) {
+    const list = groups[k].sort((a,b) => (a.taken||0) - (b.taken||0));
+    out.push(h("div",{class:"dayhead"}, (k === "unknown" ? "No date" : dayName(k)) + " · " + list.length));
+    out.push(h("div",{class:"pgrid"}, ...list.map(p => h("button",{class:"pthumb", onclick:() => openPhoto(p.id), "aria-label":"Open photo"},
+      h("img",{src:p.thumbUrl, alt:p.caption || "Trip photo", loading:"lazy"}), h("i",{style:`background:var(${G()[p.car]?.color || "--both"})`})))));
+  }
+  return out;
+}
+
+/* full-screen photo viewer */
+function openPhoto(id){ pvId = id; renderPhotoViewer(); }
+function closePhoto(){ pvId = null; $("#pv").hidden = true; }
+function renderPhotoViewer(){
+  const p = photos.find(x => x.id === pvId), box = $("#pv");
+  if (!p) { closePhoto(); return; }
+  const i = photos.indexOf(p);
+  const srcTxt = p.src === "gps" ? "photo location" : p.src === "timeline" ? "where the car was then" : "placed by hand";
+  const cap = h("input",{id:"pvCap", value:p.caption || "", placeholder:"Add a caption", maxlength:"140"});
+  cap.onchange = () => updateDoc(doc(db,"photos",p.id), {caption:cap.value.trim()}).catch(() => {});
+  const confirmBox = h("span",{hidden:true}, "Delete for everyone? ",
+    h("button",{class:"btn danger", onclick:() => deletePhoto(p)},"Delete"), h("button",{class:"btn", onclick:() => { confirmBox.hidden = true; delBtn.hidden = false; }},"Keep"));
+  const delBtn = h("button",{class:"btn danger", onclick:() => { delBtn.hidden = true; confirmBox.hidden = false; }}, "Delete");
+  box.replaceChildren(h("div",{class:"pvcard"},
+    h("div",{class:"pvtop"}, h("button",{class:"btn", onclick:closePhoto}, "✕ Close"),
+      h("span",{style:"flex:1"}),
+      h("button",{class:"btn", disabled:i <= 0, onclick:() => openPhoto(photos[i-1].id)}, "‹"),
+      h("button",{class:"btn", disabled:i >= photos.length - 1, onclick:() => openPhoto(photos[i+1].id)}, "›")),
+    h("img",{class:"pvimg", src:p.fullUrl, alt:p.caption || "Trip photo"}),
+    cap,
+    h("div",{class:"mt",style:"font-size:13px;color:var(--muted)"},
+      [p.byName ? "By " + p.byName : null, p.taken ? fmtDT.format(p.taken) : null, "Pinned by " + srcTxt].filter(Boolean).join(" · ")),
+    h("div",{class:"btns"},
+      h("a",{class:"btn primary", href:p.fullUrl, target:"_blank", rel:"noopener"}, "⬇ Download"),
+      h("button",{class:"btn", onclick:() => { closePhoto(); flyTo([p.lng, p.lat], 900); }}, "Show on map"),
+      h("button",{class:"btn", onclick:() => { closePhoto(); dropPhoto = p.id; startDrop("photo"); }}, "Move pin"),
+      p.by === me.uid ? delBtn : null, confirmBox)));
+  box.hidden = false;
+}
+let dropPhoto = null;
+async function deletePhoto(p){
+  try {
+    await deleteDoc(doc(db,"photos",p.id));
+    await Promise.allSettled([deleteObject(sref(storage, `photos/${p.id}/full.jpg`)), deleteObject(sref(storage, `photos/${p.id}/thumb.jpg`))]);
+    closePhoto();
+  } catch (e) { banner("Couldn't delete that photo (" + (e.code || "error") + ")."); }
+}
+
 /* ===================== import (first run) ===================== */
 function showImport(){
   const msg = h("div",{class:"msg", id:"impMsg"});
@@ -1006,6 +1199,12 @@ async function loadTrip(){
       if (tab !== "add") render();
       tick(false);
     }, e => banner("Places stopped updating (" + e.code + "). Reload the page."));
+    onSnapshot(collection(db,"photos"), s => {
+      photos = s.docs.map(d => ({id:d.id, ...d.data()})).sort((a,b) => (a.taken||0) - (b.taken||0));
+      syncPhotoMarkers();
+      if (tab === "photos") render();
+      if (pvId) renderPhotoViewer();
+    }, e => { if (e.code !== "permission-denied") banner("Photos stopped updating (" + e.code + ")."); });
     onSnapshot(doc(db,"trip","main"), s => {
       if (!s.exists()) return;
       TRIP = s.data(); START = T(TRIP.start); END = T(TRIP.end); DAYS = TRIP.days;

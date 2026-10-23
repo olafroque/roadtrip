@@ -205,3 +205,16 @@ button.crow:hover{background:var(--panel)}
 .crow .cm{font-family:var(--f-mono);font-size:12px;color:var(--muted);white-space:nowrap}
 .crow.muted{display:block;color:var(--muted)}
 .crow .shield{min-width:24px;height:18px;font-size:12px}
+
+/* shared trip photos */
+.pgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:4px 2px 8px}
+.pthumb{position:relative;padding:0;border:0;border-radius:8px;overflow:hidden;aspect-ratio:1;background:var(--panel2);cursor:pointer}
+.pthumb img{width:100%;height:100%;object-fit:cover;display:block}
+.pthumb i{position:absolute;left:6px;bottom:6px;width:10px;height:10px;border-radius:50%;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4)}
+.pthumb:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
+.pv{position:fixed;inset:0;z-index:60;background:rgba(10,14,12,.82);display:grid;place-items:center;padding:16px}
+.pvcard{background:var(--panel);color:var(--ink);border-radius:14px;padding:12px;width:min(920px,100%);max-height:calc(100dvh - 32px);overflow:auto;display:grid;gap:10px}
+.pvtop{display:flex;gap:8px;align-items:center}
+.pvimg{width:100%;max-height:68dvh;object-fit:contain;border-radius:8px;background:#000}
+#pvCap{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--ink)}
+.pv .btns{margin-top:0}
