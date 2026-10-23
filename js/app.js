@@ -1,7 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, onSnapshot, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
-import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610221744";
+import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610221749";
 
 /* ===================== helpers ===================== */
 const $ = s => document.querySelector(s);
@@ -872,41 +872,6 @@ function viewPlan(){
     box.append(det);
   }
   out.push(box);
-  out.push(h("div",{class:"dayhead",style:"margin:4px 2px 8px"}, "Both cars, day by day"));
-  // day-by-day dropdowns
-  if (!openDays) { openDays = new Set([dayKey(t)]); }
-  for (const d of DAYS) {
-    const items = [];
-    for (const g of ["family","friends"]) for (const s of PLAN()[g]) {
-      if (!s.drive || dayKey(T(s.at)) !== d) continue;
-      const dr = DRIVES()[s.drive], at = T(s.at);
-      items.push({sort:at, el:h("div",{class:"leg", style:`border-left-color:var(${G()[g].color})`},
-        h("h3",null, ...shieldsFor(dr.road), " ", G()[g].short, s.assumed ? h("span",{class:"tag", title:s.assumed},"assumed") : null),
-        h("div",{class:"mt"}, fmtT.format(at) + " → about " + fmtT.format(at + dr.sec*SLOW*1000) + " · " + dr.mi + " mi · " + hrs(dr.sec) + " driving"),
-        h("div",{class:"mt"}, "To " + STAYS()[s.to].name),
-        s.assumed ? h("div",{class:"mt",style:"color:var(--warn)"}, s.assumed) : null)});
-    }
-    for (const p of places.filter(p => p.status === "confirmed" && p.day === d)) {
-      const st = STAYS()[stayOn(p.who === "friends" ? "friends" : "family", T(d + "T12:00"))];
-      const m = p.lng != null ? hav(st.ll, [p.lng,p.lat]) : null;
-      items.push({sort:p.time ? placeStart(p) : T(d + "T23:58"), el:h("button",{class:"row", onclick:() => openPlace(p.id)}, icon(p),
-        h("span",{style:"min-width:0"}, h("div",{class:"nm"}, p.name),
-          h("div",{class:"mt"}, [p.time ? fmtT.format(placeStart(p)) : "Any time", G()[p.who]?.short, m == null ? "needs a pin" : m < 0.2 ? "at " + (st.short || st.name) : "about " + Math.round(m*ROAD) + " mi from " + (st.short || st.name)].filter(Boolean).join(" · "))),
-        h("span",{class:"pill confirmed"},"✓"))});
-    }
-    items.sort((a,b) => a.sort - b.sort);
-    const fam = M.family.byDay[d], fri = M.friends.byDay[d];
-    const dayMi = (x) => Math.round(x.drive + x.side);
-    const sum = h("summary",{class:"dsum"},
-      h("span",{class:"dname"}, dayName(d)),
-      h("span",{class:"dmi"},
-        h("i",{style:"background:var(--fam)"}), dayMi(fam) + " mi", h("i",{style:"background:var(--fri)"}), dayMi(fri) + " mi"));
-    const det = h("details",{class:"day", open:openDays.has(d)}, sum,
-      h("div",{class:"dbody"}, items.length ? items.map(x => x.el) :
-        h("div",{class:"mt",style:"padding:6px 2px"}, "Nothing confirmed yet. Free day at " + (STAYS()[stayOn("family", T(d + "T12:00"))].short || "the stay") + ".")));
-    det.addEventListener("toggle", () => { det.open ? openDays.add(d) : openDays.delete(d); });
-    out.push(det);
-  }
   out.push(h("p",{style:"margin:12px 0;color:var(--muted);font-size:13px"},"Main drives come from TomTom with typical traffic, plus about 15% for stops. Miles to confirmed stops are estimates from where each car sleeps that night."));
   if (TRIP.notice) out.push(h("div",{class:"notice"}, TRIP.notice));
   // trip update loader
