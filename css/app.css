@@ -187,3 +187,21 @@ details.day[open] > summary::before{transform:rotate(90deg)}
 .dbody{padding:0 10px 10px;display:grid;gap:4px}
 .dbody .leg{margin-bottom:2px}
 @media (prefers-reduced-motion:reduce){details.day > summary::before{transition:none}}
+
+/* per-car mileage dropdowns */
+details.cart{border:1px solid var(--line);border-left:5px solid var(--fam);border-radius:8px;background:var(--panel2)}
+details.cart > summary{list-style:none;cursor:pointer;padding:10px 12px}
+details.cart > summary::-webkit-details-marker{display:none}
+details.cart > summary::after{content:"Show days ▾";display:block;font-size:12px;font-weight:700;color:var(--sign);margin-top:4px}
+details.cart[open] > summary::after{content:"Hide days ▴"}
+.cbody{padding:0 12px 10px;display:grid;gap:8px}
+.cday{border-top:1px solid var(--line);padding-top:8px;display:grid;gap:2px}
+.cdh{display:flex;justify-content:space-between;gap:8px;font-family:var(--f-display);font-weight:800;text-transform:uppercase;letter-spacing:.03em;font-size:15px}
+.cdh .cm{font-family:var(--f-mono);font-weight:500;text-transform:none;letter-spacing:0;font-size:12px;color:var(--muted)}
+.crow{display:grid;grid-template-columns:62px 1fr auto;gap:8px;align-items:center;font-size:13.5px;padding:4px 2px;background:none;border:0;text-align:left;width:100%;border-radius:6px}
+button.crow:hover{background:var(--panel)}
+.crow .ct{font-family:var(--f-mono);font-size:12px;color:var(--muted)}
+.crow .cn{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.crow .cm{font-family:var(--f-mono);font-size:12px;color:var(--muted);white-space:nowrap}
+.crow.muted{display:block;color:var(--muted)}
+.crow .shield{min-width:24px;height:18px;font-size:12px}

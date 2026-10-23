@@ -1,7 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, onSnapshot, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
-import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610221702";
+import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610221744";
 
 /* ===================== helpers ===================== */
 const $ = s => document.querySelector(s);
@@ -833,20 +833,46 @@ function shieldsFor(road){
   return road.split("·").map(s => s.trim()).map(s => { const m = s.match(/^(I|US|CA)-(\d+)/); return m ? h("span",{class:"shield " + (m[1] === "CA" ? "ca" : "")}, m[2]) : null; });
 }
 let openDays = null, importMsg = "";
+const openCars = new Set();
 function viewPlan(){
   const out = [];
   const M = {family:mileage("family"), friends:mileage("friends")};
-  // totals
-  const box = h("div",{style:"display:grid;gap:10px;margin-bottom:12px"});
+  // per-car totals: each is a dropdown with that car's days, miles and confirmed stops
+  const box = h("div",{style:"display:grid;gap:10px;margin-bottom:14px"});
   for (const g of ["family","friends"]) {
     const m = M[g];
-    box.append(h("div",{style:`border:1px solid var(--line);border-left:5px solid var(${G()[g].color});border-radius:8px;padding:10px 12px;background:var(--panel2)`},
+    const sum = h("summary",{class:"csum"},
       h("div",{style:"display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap"}, h("b",null, G()[g].label),
         h("span",{style:"font-family:var(--f-display);font-weight:800;font-size:28px;line-height:1"}, m.total.toLocaleString() + " mi")),
       h("div",{style:"font-size:13px;color:var(--muted)"}, m.drives + " mi main drives + about " + m.side + " mi to " + m.counted + " confirmed stop" + (m.counted === 1 ? "" : "s"),
-        m.nopin ? " · " + m.nopin + " confirmed without a pin not counted" : "")));
+        m.nopin ? " · " + m.nopin + " confirmed without a pin not counted" : ""));
+    const body = h("div",{class:"cbody"});
+    for (const d of DAYS) {
+      const bd = m.byDay[d], dayTotal = Math.round(bd.drive + bd.side);
+      const rows = [];
+      for (const s of PLAN()[g]) {
+        if (!s.drive || dayKey(T(s.at)) !== d) continue;
+        const dr = DRIVES()[s.drive];
+        rows.push({sort:T(s.at), el:h("div",{class:"crow"}, h("span",{class:"ct"}, fmtT.format(T(s.at))), h("span",{class:"cn"}, ...shieldsFor(dr.road), " Drive to " + (STAYS()[s.to].short || STAYS()[s.to].name)), h("span",{class:"cm"}, dr.mi + " mi"))});
+      }
+      const st = STAYS()[stayOn(g, T(d + "T12:00"))];
+      for (const p of places.filter(p => p.status === "confirmed" && p.day === d && forGroup(p, g))) {
+        const dist = p.lng != null ? hav(st.ll, [p.lng,p.lat]) : null;
+        rows.push({sort:p.time ? placeStart(p) : T(d + "T23:58"), el:h("button",{class:"crow", onclick:() => openPlace(p.id)},
+          h("span",{class:"ct"}, p.time ? fmtT.format(placeStart(p)) : "Any time"), h("span",{class:"cn"}, p.name),
+          h("span",{class:"cm"}, dist == null ? "no pin" : dist < 0.2 ? "0 mi" : "~" + Math.round(dist*ROAD*2) + " mi rt"))});
+      }
+      rows.sort((x,y) => x.sort - y.sort);
+      body.append(h("div",{class:"cday"},
+        h("div",{class:"cdh"}, h("span",null, dayName(d)), h("span",{class:"cm"}, dayTotal + " mi" + (bd.drive && bd.side >= 1 ? " (" + Math.round(bd.drive) + " drive + " + Math.round(bd.side) + " stops)" : ""))),
+        rows.length ? rows.map(r => r.el) : h("div",{class:"crow muted"}, "Free day at " + (st.short || st.name))));
+    }
+    const det = h("details",{class:"cart", style:`border-left-color:var(${G()[g].color})`, open:openCars.has(g)}, sum, body);
+    det.addEventListener("toggle", () => { det.open ? openCars.add(g) : openCars.delete(g); });
+    box.append(det);
   }
   out.push(box);
+  out.push(h("div",{class:"dayhead",style:"margin:4px 2px 8px"}, "Both cars, day by day"));
   // day-by-day dropdowns
   if (!openDays) { openDays = new Set([dayKey(t)]); }
   for (const d of DAYS) {
