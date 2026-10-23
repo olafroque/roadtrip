@@ -1,7 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, onSnapshot, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
-import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610221749";
+import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610221753";
 
 /* ===================== helpers ===================== */
 const $ = s => document.querySelector(s);
@@ -195,9 +195,11 @@ async function initMap(){
   click.setInputAction(ev => {
     if (dropFor) return;
     const picked = viewer.scene.pick(ev.position);
+    if (Array.isArray(picked?.id)) { zoomToEntities(picked.id); return; }
     const id = picked?.id?.properties?.placeId?.getValue();
     if (id) openPlace(id);
   }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+  initPins();
   $("#modeBtn").hidden = !MAPS_KEY;
   await setMode(mode);
   fitTrip(0);
@@ -278,7 +280,7 @@ let U = 7, lastU = 0;               // meters per model unit; grows as the camer
 const modelSpecs = new Map();      // key -> {kind, ll, accent, placeId}
 function unitForCamera(){
   const hgt = viewer.camera.positionCartographic.height;
-  return Math.min(600, Math.max(mode === "3d" ? 5 : 6, hgt / (mode === "3d" ? 450 : 260)));
+  return Math.min(3000, Math.max(mode === "3d" ? 5 : 6, hgt / (mode === "3d" ? 450 : 260)));
 }
 function rescaleModels(force){
   if (!viewer) return;
@@ -385,6 +387,38 @@ function drawStays(){
 }
 
 /* pins + confirmed models */
+/* pin clustering: nearby pins merge into a "5 places" bubble that splits apart as you zoom in */
+let pinDS = null;
+function clusterImage(n){
+  const s = `<svg xmlns="http://www.w3.org/2000/svg" width="96" height="44" viewBox="0 0 96 44">
+    <rect x="2" y="2" width="92" height="40" rx="20" fill="#17221d" stroke="#ffffff" stroke-width="3"/>
+    <text x="48" y="28" text-anchor="middle" font-family="Atkinson Hyperlegible, Arial, sans-serif" font-size="18" font-weight="700" fill="#ffffff">${n} places</text></svg>`;
+  return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(s);
+}
+function initPins(){
+  const Cesium = C();
+  pinDS = new Cesium.CustomDataSource("pins");
+  viewer.dataSources.add(pinDS);
+  const cl = pinDS.clustering;
+  cl.enabled = true; cl.pixelRange = 34; cl.minimumClusterSize = 3; cl.clusterLabels = true; cl.clusterBillboards = true;
+  cl.clusterEvent.addEventListener((list, cluster) => {
+    cluster.label.show = false;
+    cluster.billboard.show = true;
+    cluster.billboard.image = clusterImage(list.length);
+    cluster.billboard.width = 88; cluster.billboard.height = 40;
+    cluster.billboard.verticalOrigin = Cesium.VerticalOrigin.BOTTOM;
+    cluster.billboard.pixelOffset = new Cesium.Cartesian2(0, -30);   // float above the pieces so they stay visible
+    cluster.billboard.disableDepthTestDistance = Number.POSITIVE_INFINITY;
+    cluster.billboard.id = list;   // so a tap can zoom to these places
+  });
+}
+function zoomToEntities(list){
+  const Cesium = C();
+  const pts = list.map(e => e.position?.getValue(viewer.clock.currentTime)).filter(Boolean);
+  if (!pts.length) return;
+  const bs = Cesium.BoundingSphere.fromPoints(pts);
+  viewer.camera.flyToBoundingSphere(bs, {offset:new Cesium.HeadingPitchRange(Cesium.Math.toRadians(-20), Cesium.Math.toRadians(-50), Math.max(bs.radius * 3.2, 2500)), duration:1.2});
+}
 function syncPins(){
   if (!viewer || !TRIP) return;
   const Cesium = C();
@@ -395,10 +429,10 @@ function syncPins(){
     const sig = [p.kind,p.who,p.status,p.lng,p.lat,p.name, p.id === selId].join("|");
     const cur = ents.pins.get(p.id);
     if (cur && cur.sig === sig) continue;
-    if (cur) viewer.entities.remove(cur.e);
+    if (cur) pinDS.entities.remove(cur.e);
     const col = gcol(p.who);
     const atStay = Object.values(STAYS()).some(s => s.model && hav(s.ll, [p.lng,p.lat]) < 0.1);
-    const e = viewer.entities.add({
+    const e = pinDS.entities.add({
       position:Cesium.Cartesian3.fromDegrees(p.lng, p.lat),
       properties:{placeId:p.id},
       billboard:(p.status === "confirmed" && !atStay) ? undefined : {image:pinImage(p.kind, col, p.status === "idea"), width:p.id === selId ? 44 : 34, height:p.id === selId ? 44 : 34,
@@ -413,7 +447,7 @@ function syncPins(){
     // 3D model for confirmed places (not when the plan is at a stay)
     if (p.status === "confirmed" && !atStay) addModel("place:" + p.id, p.kind, [p.lng,p.lat], col, p.id); else removeModel("place:" + p.id);
   }
-  for (const [id, v] of ents.pins) if (!seen.has(id)) { viewer.entities.remove(v.e); ents.pins.delete(id); removeModel("place:" + id); }
+  for (const [id, v] of ents.pins) if (!seen.has(id)) { pinDS.entities.remove(v.e); ents.pins.delete(id); removeModel("place:" + id); }
 }
 
 /* cars: toy-car game pieces that turn with the road */
