@@ -2,7 +2,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/fireba
 import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, onSnapshot, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-storage.js";
-import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610221846";
+import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610222052";
 
 /* ===================== helpers ===================== */
 const $ = s => document.querySelector(s);
@@ -364,7 +364,7 @@ function buildModel(key, s){
     const pos = Cesium.Cartesian3.fromDegrees(s.ll[0], s.ll[1]);
     const e = viewer.entities.add({position:pos, properties:s.placeId ? {placeId:s.placeId} : undefined,
       orientation:Cesium.Transforms.headingPitchRollQuaternion(pos, new Cesium.HeadingPitchRoll(Cesium.Math.toRadians(gl.heading || 0), 0, 0)),
-      model:{uri:gl.uri + "?v=202610221846", scale:new Cesium.CallbackProperty(() => U * gl.size / gl.width, false), heightReference:Cesium.HeightReference.CLAMP_TO_GROUND,
+      model:{uri:gl.uri + "?v=202610222052", scale:new Cesium.CallbackProperty(() => U * gl.size / gl.width, false), heightReference:Cesium.HeightReference.CLAMP_TO_GROUND,
         shadows:Cesium.ShadowMode.CAST_ONLY, silhouetteColor:Cesium.Color.fromCssColorString(s.accent || "#13603f"), silhouetteSize:2}});
     const list = [e]; list.glb = true;
     ents.models.set(key, list);
@@ -559,7 +559,7 @@ function startPlay(){
   const step = now => {
     const dt = Math.min(100, now - last); last = now;
     const driving = carAt("family", t).mode === "drive" || carAt("friends", t).mode === "drive";
-    t += dt * (ride ? 12 : driving ? 40 : 160) * 1000;
+    t += dt * (ride ? 6 : driving ? 20 : 80) * 1000;   // half the original speed
     if (t >= END) { t = END; tick(false); stopPlay(); return; }
     tick(false); raf = requestAnimationFrame(step);
   };
@@ -569,15 +569,78 @@ $("#playBtn").innerHTML = PLAY_ICON;
 $("#playBtn").addEventListener("click", () => playing ? stopPlay() : startPlay());
 
 /* map tools */
-$("#rideBtn").onclick = e => {
-  ride = !ride; e.currentTarget.setAttribute("aria-pressed", String(ride));
-  if (!viewer) return;
-  if (ride) { viewer.trackedEntity = ents.cars.family; banner("Riding along with our car. Press play to drive. Drag to look around."); }
-  else { viewer.trackedEntity = undefined; banner(""); }
-};
 $("#modeBtn").onclick = () => { if (viewer) setMode(mode === "3d" ? "board" : "3d"); };
-$("#fitBtn").onclick = () => { if (ride) $("#rideBtn").click(); fitTrip(); };
-$("#hereBtn").onclick = () => { if (ride) $("#rideBtn").click(); flyTo(STAYS()[stayOn("family", t)].ll, 1800); };
+
+// "Go to" menu: follow a car, today's area, whole trip
+function follow(g){
+  ride = g || false;
+  const b = $("#goBtn");
+  b.setAttribute("aria-pressed", String(!!ride));
+  b.textContent = ride ? "Following " + carName(ride) + " ▾" : "Go to ▾";
+  if (!viewer) return;
+  viewer.trackedEntity = ride ? ents.cars[ride] : undefined;
+  banner(ride ? "Following " + carName(ride) + ". Press play to drive. Drag to look around." : "");
+}
+const carName = g => G()[g].short.replace(/^Our\b/, "our");
+const stopFollow = () => { if (ride) follow(false); };
+function fitToday(){
+  stopFollow();
+  if (!viewer) return;
+  const Cesium = C(), d = dayKey(t), pts = [];
+  for (const g of ["family","friends"]) {
+    pts.push(STAYS()[stayOn(g, T(d + "T06:00"))].ll, STAYS()[stayOn(g, T(d + "T23:30"))].ll);
+    for (const s of PLAN()[g]) if (s.drive && dayKey(T(s.at)) === d) { const r = RT[DRIVES()[s.drive].route]; if (r) pts.push(...r.pts.filter((_, i) => i % 20 === 0), r.pts[r.pts.length-1]); }
+  }
+  for (const p of places) if (p.status === "confirmed" && p.day === d && p.lng != null) pts.push([p.lng, p.lat]);
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+  let w = Math.min(...xs), e = Math.max(...xs), s = Math.min(...ys), n = Math.max(...ys);
+  const pad = Math.max(0.03, (e - w) * 0.15, (n - s) * 0.15);
+  viewer.camera.flyTo({destination:Cesium.Rectangle.fromDegrees(w - pad, s - pad, e + pad, n + pad), duration:1.4});
+}
+function goMenu(open){
+  const m = $("#goMenu"), show = open ?? m.hidden;
+  if (show) {
+    const items = [];
+    for (const g of ["family","friends"]) items.push(h("button",{role:"menuitem", onclick:() => { goMenu(false); follow(g); }},
+      h("i",{style:`background:var(${G()[g].color})`}), "Follow " + carName(g)));
+    if (ride) items.push(h("button",{role:"menuitem", onclick:() => { goMenu(false); follow(false); }}, "Stop following"));
+    items.push(h("button",{role:"menuitem", onclick:() => { goMenu(false); fitToday(); }}, "Today: " + dayName(dayKey(t))));
+    items.push(h("button",{role:"menuitem", onclick:() => { goMenu(false); stopFollow(); fitTrip(); }}, "Whole trip"));
+    m.replaceChildren(...items);
+  }
+  m.hidden = !show; $("#goBtn").setAttribute("aria-expanded", String(show));
+}
+$("#goBtn").onclick = e => { e.stopPropagation(); goMenu(); };
+document.addEventListener("click", e => { if (!$("#goMenu").hidden && !e.target.closest("#goMenu")) goMenu(false); });
+
+// Near me: the phone's own location as a blue dot
+let meEnt = null, meWatch = null;
+$("#nearBtn").onclick = () => {
+  if (!navigator.geolocation) { banner("This browser can't share its location."); return; }
+  const b = $("#nearBtn"); b.textContent = "Finding you…";
+  navigator.geolocation.getCurrentPosition(pos => {
+    b.textContent = "Near me";
+    const ll = [pos.coords.longitude, pos.coords.latitude];
+    showMe(ll); stopFollow(); flyTo(ll, 2500);
+    if (meWatch == null) meWatch = navigator.geolocation.watchPosition(p => showMe([p.coords.longitude, p.coords.latitude]), () => {}, {enableHighAccuracy:true, maximumAge:30000});
+  }, err => {
+    b.textContent = "Near me";
+    banner(err.code === 1 ? "Location is blocked. Allow location for this site in your browser settings, then try again." : "Couldn't find your location. Try again outside or with Wi-Fi on.");
+    setTimeout(() => banner(""), 6000);
+  }, {enableHighAccuracy:true, timeout:12000, maximumAge:60000});
+};
+function showMe(ll){
+  if (!viewer) return;
+  const Cesium = C();
+  const pos = Cesium.Cartesian3.fromDegrees(ll[0], ll[1]);
+  if (meEnt) { meEnt.position = pos; }
+  else meEnt = viewer.entities.add({position:pos, point:{pixelSize:16, color:Cesium.Color.fromCssColorString("#1c7ed6"), outlineColor:Cesium.Color.WHITE, outlineWidth:3,
+    heightReference:Cesium.HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance:Number.POSITIVE_INFINITY},
+    label:{text:"You", font:"700 12px Atkinson Hyperlegible, sans-serif", fillColor:Cesium.Color.WHITE, showBackground:true, backgroundColor:Cesium.Color.fromCssColorString("#1c7ed6"),
+      pixelOffset:new Cesium.Cartesian2(0, -20), heightReference:Cesium.HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance:Number.POSITIVE_INFINITY}});
+  viewer.scene.requestRender();
+}
+function goStay(k){ stopFollow(); flyTo(STAYS()[k].ll, 1800); if (matchMedia("(max-width: 820px)").matches) toggleSheet(false); }
 
 /* ===================== panel ===================== */
 function setTab(n){ tab = n; render(); }
@@ -663,7 +726,7 @@ function viewPlaces(){
 function openPlace(id){
   selId = id; tab = "place"; render(); syncPins(); toggleSheet(true);
   const p = places.find(x => x.id === id);
-  if (p && p.lng != null) { if (ride) $("#rideBtn").click(); flyTo([p.lng,p.lat], 1200); }
+  if (p && p.lng != null) { stopFollow(); flyTo([p.lng,p.lat], 1200); }
 }
 let distBox = null;
 function renderDistances(){
@@ -910,6 +973,34 @@ function shieldsFor(road){
 }
 let openDays = null, importMsg = "";
 const openCars = new Set();
+// where each car sleeps, in order, with nights; tap to see it on the map
+function viewStays(){
+  const fmtD = new Intl.DateTimeFormat("en-US",{timeZone:TZ, weekday:"short", month:"short", day:"numeric"});
+  const rows = [];
+  for (const g of ["family","friends"]) {
+    const plan = PLAN()[g];
+    for (let i=0;i<plan.length;i++) {
+      const s = plan[i], k = s.stay; if (!k) continue;
+      const prev = plan[i-1], from = prev?.drive ? T(prev.at) + DRIVES()[prev.drive].sec * SLOW * 1000 : START;
+      const nxt = plan.slice(i+1).find(x => x.drive);
+      const to = nxt ? T(nxt.at) : END;
+      const nights = Math.round((dayStart(to) - dayStart(from)) / 864e5);
+      if (nights < 1) continue;   // not sleeping there (start point, or home at the end)
+      rows.push({g, k, from, to, nights});
+    }
+  }
+  rows.sort((a,b) => a.from - b.from);
+  const box = h("div",{class:"locbox", style:"margin-top:4px"}, h("div",{class:"st"}, h("b",null,"Where we sleep. "), "Tap one to see it on the map."));
+  for (const r of rows) {
+    const st = STAYS()[r.k];
+    box.append(h("button",{class:"crow stayrow", onclick:() => goStay(r.k)},
+      h("i",{class:"dot", style:`background:var(${G()[r.g].color})`}),
+      h("span",{class:"cn"}, h("b",null, st.short || st.name), h("br"), h("span",{class:"cm"}, fmtD.format(r.from) + " to " + fmtD.format(r.to))),
+      h("span",{class:"cm"}, r.nights ? r.nights + (r.nights === 1 ? " night" : " nights") : "")));
+  }
+  return box;
+}
+const dayStart = tm => T(dayKey(tm) + "T00:00");
 function viewPlan(){
   const out = [];
   const M = {family:mileage("family"), friends:mileage("friends")};
@@ -929,7 +1020,7 @@ function viewPlan(){
       for (const s of PLAN()[g]) {
         if (!s.drive || dayKey(T(s.at)) !== d) continue;
         const dr = DRIVES()[s.drive];
-        rows.push({sort:T(s.at), el:h("div",{class:"crow"}, h("span",{class:"ct"}, fmtT.format(T(s.at))), h("span",{class:"cn"}, ...shieldsFor(dr.road), " Drive to " + (STAYS()[s.to].short || STAYS()[s.to].name)), h("span",{class:"cm"}, dr.mi + " mi"))});
+        rows.push({sort:T(s.at), el:h("div",{class:"crow"}, h("span",{class:"ct"}, fmtT.format(T(s.at))), h("span",{class:"cn"}, ...shieldsFor(dr.road), " Drive to ", h("button",{class:"slink", onclick:() => goStay(s.to)}, STAYS()[s.to].short || STAYS()[s.to].name)), h("span",{class:"cm"}, dr.mi + " mi"))});
       }
       const st = STAYS()[stayOn(g, T(d + "T12:00"))];
       for (const p of places.filter(p => p.status === "confirmed" && p.day === d && forGroup(p, g))) {
@@ -941,13 +1032,14 @@ function viewPlan(){
       rows.sort((x,y) => x.sort - y.sort);
       body.append(h("div",{class:"cday"},
         h("div",{class:"cdh"}, h("span",null, dayName(d)), h("span",{class:"cm"}, dayTotal + " mi" + (bd.drive && bd.side >= 1 ? " (" + Math.round(bd.drive) + " drive + " + Math.round(bd.side) + " stops)" : ""))),
-        rows.length ? rows.map(r => r.el) : h("div",{class:"crow muted"}, "Free day at " + (st.short || st.name))));
+        rows.length ? rows.map(r => r.el) : h("div",{class:"crow muted"}, "Free day at ", h("button",{class:"slink", onclick:() => goStay(stayOn(g, T(d + "T12:00")))}, st.short || st.name))));
     }
     const det = h("details",{class:"cart", style:`border-left-color:var(${G()[g].color})`, open:openCars.has(g)}, sum, body);
     det.addEventListener("toggle", () => { det.open ? openCars.add(g) : openCars.delete(g); });
     box.append(det);
   }
   out.push(box);
+  out.push(viewStays());
   out.push(h("p",{style:"margin:12px 0;color:var(--muted);font-size:13px"},"Main drives come from TomTom with typical traffic, plus about 15% for stops. Miles to confirmed stops are estimates from where each car sleeps that night."));
   if (TRIP.notice) out.push(h("div",{class:"notice"}, TRIP.notice));
   // trip update loader
@@ -994,7 +1086,7 @@ function syncPhotoMarkers(){
   const Cesium = C();
   photoDS.entities.removeAll();
   for (const p of photos) {
-    if (p.lng == null || !p.marker) continue;
+    if (needsSpot(p) || !p.marker) continue;
     photoDS.entities.add({position:Cesium.Cartesian3.fromDegrees(p.lng, p.lat), properties:{photoId:p.id},
       billboard:{image:p.marker, width:40, height:40, heightReference:Cesium.HeightReference.CLAMP_TO_GROUND,
         disableDepthTestDistance:Number.POSITIVE_INFINITY, verticalOrigin:Cesium.VerticalOrigin.BOTTOM}});
@@ -1047,10 +1139,11 @@ async function uploadOne(file, item){
   const meta = await readMeta(file);
   let lat = meta.lat, lng = meta.lng, src = "gps";
   if (lat == null) {
-    // no location in the photo: use where this car was at that moment on the trip timeline
+    // no location in the photo. Taken during the trip: use where this car was then.
+    // Otherwise don't guess; the person places it on the map.
     const when = meta.taken && meta.taken >= START && meta.taken <= END ? meta.taken : null;
-    const c = carAt(myCar, when || t);
-    lat = c.ll[1]; lng = c.ll[0]; src = when ? "timeline" : "now";
+    if (when) { const c = carAt(myCar, when); lat = c.ll[1]; lng = c.ll[0]; src = "timeline"; }
+    else src = "none";
   }
   const bmp = await decodeImage(file);
   item.state = "Shrinking…"; renderUploads();
@@ -1066,7 +1159,8 @@ async function uploadOne(file, item){
   const [fullUrl, thumbUrl] = await Promise.all([getDownloadURL(fr), getDownloadURL(tr)]);
   await setDoc(doc(db, "photos", id), {by:me.uid, byName:me.name, car:myCar, at:new Date().toISOString(), taken:meta.taken || null,
     lat, lng, src, w:full.w, h:full.h, fullUrl, thumbUrl, marker, caption:"", fname});
-  item.state = "✓ Added"; renderUploads();
+  if (src === "none") { item.state = "✓ Added, no location"; item.needId = id; }
+  else item.state = "✓ Added"; renderUploads();
 }
 async function uploadFiles(files){
   const list = [...files].map(f => ({name:f.name, state:"Waiting"}));
@@ -1078,9 +1172,15 @@ async function uploadFiles(files){
 }
 function renderUploads(){
   const box = $("#uploadList"); if (!box) return;
-  box.replaceChildren(...uploads.slice(0, 8).map(u => h("div",{class:"crow"}, h("span",{class:"cn"}, u.name), h("span",{class:"cm"}, u.state))));
+  box.replaceChildren(...uploads.slice(0, 8).map(u => {
+    const need = u.needId && needsSpot(photos.find(x => x.id === u.needId) || {});
+    return h("div",{class:"urow"}, h("span",{class:"cn"}, u.name), h("span",{class:"cm"}, u.state),
+      need ? h("button",{class:"btn primary", style:"padding:5px 10px;font-size:13px", onclick:() => placePhoto(u.needId)}, "Place it on the map") : null);
+  }));
 }
 
+const needsSpot = p => p.lng == null || p.src === "now" || p.src === "none";
+function placePhoto(id){ closePhoto(); dropPhoto = id; startDrop("photo"); $("#dropBar").firstChild.textContent = "Tap the map where this photo was taken. "; }
 /* Photos tab */
 function viewPhotos(){
   const out = [];
@@ -1099,11 +1199,14 @@ function viewPhotos(){
   for (const p of photos) (groups[p.taken ? dayKey(p.taken) : "unknown"] ||= []).push(p);
   const keys = Object.keys(groups).sort();
   out.push(h("div",{class:"dayhead",style:"margin-top:14px"}, photos.length + " photo" + (photos.length === 1 ? "" : "s")));
+  const need = photos.filter(p => needsSpot(p) && p.by === me.uid).length;
+  if (need) out.push(h("div",{class:"notice"}, need + (need === 1 ? " of your photos has" : " of your photos have") + " no location. Tap one marked Needs a spot, then Place on map."));
   for (const k of keys) {
     const list = groups[k].sort((a,b) => (a.taken||0) - (b.taken||0));
     out.push(h("div",{class:"dayhead"}, (k === "unknown" ? "No date" : dayName(k)) + " · " + list.length));
     out.push(h("div",{class:"pgrid"}, ...list.map(p => h("button",{class:"pthumb", onclick:() => openPhoto(p.id), "aria-label":"Open photo"},
-      h("img",{src:p.thumbUrl, alt:p.caption || "Trip photo", loading:"lazy"}), h("i",{style:`background:var(${G()[p.car]?.color || "--both"})`})))));
+      h("img",{src:p.thumbUrl, alt:p.caption || "Trip photo", loading:"lazy"}), h("i",{style:`background:var(${G()[p.car]?.color || "--both"})`}),
+      needsSpot(p) ? h("span",{class:"need"}, "Needs a spot") : null))));
   }
   return out;
 }
@@ -1115,7 +1218,7 @@ function renderPhotoViewer(){
   const p = photos.find(x => x.id === pvId), box = $("#pv");
   if (!p) { closePhoto(); return; }
   const i = photos.indexOf(p);
-  const srcTxt = p.src === "gps" ? "photo location" : p.src === "timeline" ? "where the car was then" : "placed by hand";
+  const srcTxt = p.src === "gps" ? "Pinned by photo location" : p.src === "timeline" ? "Pinned where the car was then" : p.src === "manual" ? "Placed by hand" : "Not on the map yet";
   const cap = h("input",{id:"pvCap", value:p.caption || "", placeholder:"Add a caption", maxlength:"140"});
   cap.onchange = () => updateDoc(doc(db,"photos",p.id), {caption:cap.value.trim()}).catch(() => {});
   const confirmBox = h("span",{hidden:true}, "Delete for everyone? ",
@@ -1129,11 +1232,11 @@ function renderPhotoViewer(){
     h("img",{class:"pvimg", src:p.fullUrl, alt:p.caption || "Trip photo"}),
     cap,
     h("div",{class:"mt",style:"font-size:13px;color:var(--muted)"},
-      [p.byName ? "By " + p.byName : null, p.taken ? fmtDT.format(p.taken) : null, "Pinned by " + srcTxt].filter(Boolean).join(" · ")),
+      [p.byName ? "By " + p.byName : null, p.taken ? fmtDT.format(p.taken) : null, srcTxt].filter(Boolean).join(" · ")),
     h("div",{class:"btns"},
       h("a",{class:"btn primary", href:p.fullUrl, target:"_blank", rel:"noopener"}, "⬇ Download"),
-      h("button",{class:"btn", onclick:() => { closePhoto(); flyTo([p.lng, p.lat], 900); }}, "Show on map"),
-      h("button",{class:"btn", onclick:() => { closePhoto(); dropPhoto = p.id; startDrop("photo"); }}, "Move pin"),
+      needsSpot(p) ? null : h("button",{class:"btn", onclick:() => { closePhoto(); flyTo([p.lng, p.lat], 900); }}, "Show on map"),
+      h("button",{class:needsSpot(p) ? "btn primary" : "btn", onclick:() => placePhoto(p.id)}, needsSpot(p) ? "Place on map" : "Move pin"),
       p.by === me.uid ? delBtn : null, confirmBox)));
   box.hidden = false;
 }
@@ -1145,6 +1248,62 @@ async function deletePhoto(p){
     closePhoto();
   } catch (e) { banner("Couldn't delete that photo (" + (e.code || "error") + ")."); }
 }
+
+
+/* ===================== first-time tour ===================== */
+// 5 quick pop-ups that point at the real buttons. Shows once per device; "How it works" replays it.
+const TOUR = [
+  {el:"#map", sheet:false, title:"This is the trip board",
+    text:"Pink is our car, blue is Amber's. Hollow pins are ideas. 3D pieces are confirmed stops and where we sleep. Press ▶ at the bottom to watch both cars drive the week."},
+  {el:"#tabAdd", sheet:true, title:"Add a place",
+    text:"Search Google or drop a pin on the map. Mark it Idea, Maybe or Confirmed so everyone knows where it stands."},
+  {el:"#tabPlaces", sheet:true, title:"See every idea",
+    text:"Everything both cars added, by city, type or day. Drive plan shows miles per day and where we sleep."},
+  {el:"#tabPhotos", sheet:true, title:"Share photos",
+    text:"Add photos from your phone. They land on the map where you took them, and anyone can download them."},
+  {el:"#goBtn", sheet:false, title:"Get around fast",
+    text:"Go to follows a car, zooms to today or shows the whole trip. Near me puts you on the map."}
+];
+let tourI = -1;
+function startTour(){ tourI = 0; showTour(); }
+function endTour(){
+  tourI = -1; $("#tour").hidden = true;
+  try { localStorage.setItem("tourDone", "1"); } catch {}
+  if (matchMedia("(max-width: 820px)").matches) toggleSheet(false);
+}
+function showTour(){
+  const s = TOUR[tourI], box = $("#tour");
+  if (matchMedia("(max-width: 820px)").matches) toggleSheet(s.sheet);
+  goMenu(false);
+  box.hidden = false;
+  const last = tourI === TOUR.length - 1;
+  const card = h("div",{class:"tcard", role:"dialog", "aria-labelledby":"tTitle"},
+    h("div",{class:"tstep"}, (tourI + 1) + " of " + TOUR.length),
+    h("h3",{id:"tTitle"}, s.title), h("p",null, s.text),
+    h("div",{class:"tbtns"},
+      h("button",{class:"btn", onclick:endTour}, last ? "Close" : "Skip"),
+      h("span",{style:"flex:1"}),
+      tourI > 0 ? h("button",{class:"btn", onclick:() => { tourI--; showTour(); }}, "Back") : null,
+      h("button",{class:"btn primary", id:"tNext", onclick:() => { if (last) endTour(); else { tourI++; showTour(); } }}, last ? "Let's go" : "Next")));
+  const ring = h("div",{class:"tring"});
+  box.replaceChildren(ring, card);
+  // wait for the sheet to slide, then place the ring and the card next to the target
+  setTimeout(() => {
+    const r = $(s.el).getBoundingClientRect(), pad = 6, vw = innerWidth, vh = innerHeight;
+    const big = r.width > vw * 0.5 && r.height > vh * 0.4;
+    Object.assign(ring.style, big ? {left:r.left + 14 + "px", top:r.top + 14 + "px", width:r.width - 28 + "px", height:r.height - 28 + "px"}
+      : {left:r.left - pad + "px", top:r.top - pad + "px", width:r.width + pad*2 + "px", height:r.height + pad*2 + "px"});
+    const cw = Math.min(340, vw - 32), ch = card.offsetHeight;
+    let left = big ? r.left + (r.width - cw)/2 : Math.min(Math.max(16, r.left + r.width/2 - cw/2), vw - cw - 16);
+    let top = big ? r.top + r.height/2 - ch/2 : (r.bottom + 14 + ch < vh ? r.bottom + 14 : Math.max(16, r.top - ch - 14));
+    if (!big && r.right + 16 + cw < vw && r.height > 30 && r.left < vw/3) { left = r.right + 16; top = Math.max(16, Math.min(r.top, vh - ch - 16)); }
+    Object.assign(card.style, {left:left + "px", top:top + "px", width:cw + "px"});
+    $("#tNext").focus();
+  }, 320);
+}
+document.addEventListener("keydown", e => { if (tourI >= 0 && e.key === "Escape") endTour(); });
+$("#helpBtn").onclick = () => startTour();
+addEventListener("resize", () => { if (tourI >= 0) showTour(); });
 
 /* ===================== import (first run) ===================== */
 function showImport(){
@@ -1211,6 +1370,8 @@ async function loadTrip(){
       buildRoutes(); buildDays(); drawLegend();
       if (viewer) { drawRoutes(); drawStays(); drawCars(); syncPins(); }
       render(); tick(false);
+      let seen = false; try { seen = localStorage.getItem("tourDone") === "1"; } catch {}
+      if (!seen && tourI < 0 && !window.__tourQueued) { window.__tourQueued = true; setTimeout(startTour, 1800); }
     });
   }
   render(); tick(false);

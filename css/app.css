@@ -218,3 +218,30 @@ button.crow:hover{background:var(--panel)}
 .pvimg{width:100%;max-height:68dvh;object-fit:contain;border-radius:8px;background:#000}
 #pvCap{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--ink)}
 .pv .btns{margin-top:0}
+
+/* map tools v2: Go to menu, Near me, active = green outline */
+.maptools button[aria-pressed="true"]{background:var(--panel);color:var(--ink);box-shadow:0 0 0 3px #2f9e44,0 2px 6px #0002}
+.gomenu{display:grid;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 6px 18px #0004;overflow:hidden;min-width:190px}
+.gomenu button{border:0;border-radius:0;box-shadow:none;background:none;padding:11px 12px;display:flex;align-items:center;gap:8px;font-weight:700;font-size:14px;color:var(--ink);text-align:left}
+.gomenu button+button{border-top:1px solid var(--line)}
+.gomenu button:hover,.gomenu button:focus-visible{background:var(--panel2)}
+.gomenu i{width:11px;height:11px;border-radius:50%;flex:none}
+.slink{background:none;border:0;padding:0;font:inherit;color:inherit;text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:2px;cursor:pointer}
+.stayrow{display:grid;grid-template-columns:12px 1fr auto;align-items:center;gap:10px;width:100%;text-align:left;background:none;border:0;border-top:1px solid var(--line);padding:9px 2px;font:inherit;color:inherit;cursor:pointer}
+.stayrow .dot{width:11px;height:11px;border-radius:50%}
+.pthumb .need{position:absolute;inset:auto 0 0 0;background:#c92a2acc;color:#fff;font-size:11px;font-weight:700;padding:3px 4px;text-align:center}
+.urow{display:grid;grid-template-columns:1fr auto;gap:4px 10px;align-items:center;font-size:13px;padding:3px 2px}
+.urow .cn{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.urow .cm{font-family:var(--f-mono);font-size:12px;color:var(--muted)}
+.urow .btn{grid-column:1/-1;justify-self:start}
+
+/* first-time tour */
+.tour{position:fixed;inset:0;z-index:70}
+.tring{position:fixed;border-radius:12px;box-shadow:0 0 0 4px #2f9e44,0 0 0 9999px rgba(10,14,12,.62);transition:all .3s ease;pointer-events:none}
+.tcard{position:fixed;background:var(--panel);color:var(--ink);border-radius:14px;padding:16px;box-shadow:0 12px 32px #0006;transition:top .3s ease,left .3s ease}
+.tcard h3{margin:2px 0 6px;font-family:var(--f-display);font-weight:800;font-size:24px;text-transform:uppercase;letter-spacing:.02em}
+.tcard p{margin:0 0 14px;font-size:15px;line-height:1.45}
+.tstep{font-family:var(--f-mono);font-size:12px;color:var(--muted)}
+.tbtns{display:flex;gap:8px;align-items:center}
+@media (prefers-reduced-motion:reduce){.tring,.tcard{transition:none}}
+@media (max-width:820px){#helpBtn{padding:6px 8px;font-size:12px}}
