@@ -2,7 +2,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/fireba
 import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, onSnapshot, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-storage.js";
-import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610231148";
+import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610231653";
 
 /* ===================== helpers ===================== */
 const $ = s => document.querySelector(s);
@@ -357,9 +357,11 @@ function addModel(key, kind, ll, accent, placeId){
 /* .glb game pieces, keyed by place id or by "stay:<key>".
    width = the model's footprint in its own units; size = how wide it should stand on the board, in game units;
    heading = degrees to turn it so its front faces the street/camera. */
+// Standard piece size: every game piece is as wide as the Oslovar House (15 units across its base).
+const PIECE_W = 15;
 const GLB = {
-  aquarium:      {uri:"models/aquarium_meshy.glb", width:1.9, size:13, heading:90},   // Meshy model, optimized (my code-built one: models/aquarium.glb)
-  "stay:sc":     {uri:"models/oslovar.glb",  width:1.9, size:15,  heading:90}      // Meshy model, optimized
+  aquarium:      {uri:"models/aquarium_meshy.glb", width:1.9, size:PIECE_W, heading:90},   // Meshy model, optimized (my code-built one: models/aquarium.glb)
+  "stay:sc":     {uri:"models/oslovar.glb",  width:1.9, size:PIECE_W, heading:90}      // Meshy model, optimized
 };
 // the piece for the place open in the panel stands taller so it's easy to see
 const SEL_GROW = 3;
@@ -387,7 +389,7 @@ function buildModel(key, s){
     const pos = Cesium.Cartesian3.fromDegrees(s.ll[0], s.ll[1]);
     const e = viewer.entities.add({position:pos, properties:pieceProps(key, s),
       orientation:Cesium.Transforms.headingPitchRollQuaternion(pos, new Cesium.HeadingPitchRoll(Cesium.Math.toRadians(gl.heading || 0), 0, 0)),
-      model:{uri:gl.uri + "?v=202610231148", scale:new Cesium.CallbackProperty(() => U * gl.size / gl.width * growKey(key), false), heightReference:Cesium.HeightReference.CLAMP_TO_GROUND,
+      model:{uri:gl.uri + "?v=202610231653", scale:new Cesium.CallbackProperty(() => U * gl.size / gl.width * growKey(key), false), heightReference:Cesium.HeightReference.CLAMP_TO_GROUND,
         shadows:Cesium.ShadowMode.CAST_ONLY, silhouetteColor:Cesium.Color.fromCssColorString(s.accent || "#13603f"), silhouetteSize:2}});
     const list = [e]; list.glb = true;
     ents.models.set(key, list);
@@ -395,13 +397,14 @@ function buildModel(key, s){
     return;
   }
   if (old) for (const e of old) viewer.entities.remove(e);
-  const list = [], UL = U * growKey(key);   // local unit, grown when selected
-  const mLon = UL / (111320*Math.cos(s.ll[1]*Math.PI/180)), mLat = UL / 110540;
   const parts = partsFor(s.kind, s.accent, s.placeId).map(p => ({...p, z:p.z + 0.22}));
   // board-game stand: a cream disc with a colored rim under every piece
   let r = 0;
   for (const p of parts) r = Math.max(r, p.t === "box" ? Math.hypot(Math.abs(p.x) + p.dim[0]/2, Math.abs(p.y) + p.dim[1]/2) : Math.hypot(p.x, p.y) + p.r);
   r = Math.min(r + 0.35, 7);
+  // local unit: scaled so the stand is PIECE_W across (same as the Oslovar House), and grown when selected
+  const list = [], UL = U * growKey(key) * (PIECE_W / 2) / (r + 0.22);
+  const mLon = UL / (111320*Math.cos(s.ll[1]*Math.PI/180)), mLat = UL / 110540;
   parts.unshift({t:"cyl", x:0,y:0,z:0.07, len:0.14, r:r+0.22, rt:r+0.22, c:s.accent || "#13603f"}, {t:"cyl", x:0,y:0,z:0.17, len:0.1, r, rt:r, c:"#f6f1e7"});
   const SH = Cesium.ShadowMode.CAST_ONLY;   // pieces cast soft shadows on the map; no self-shadow streaks
   for (const p of parts) {
@@ -489,7 +492,7 @@ function syncPins(){
     const piece = p.status === "confirmed" && !atStay;
     const e = pinDS.entities.add({
       // confirmed places: the name floats just above the top of their game piece
-      position: piece ? new Cesium.CallbackProperty(() => Cesium.Cartesian3.fromDegrees(p.lng, p.lat, 7.4 * U * growOf(p.id)), false) : Cesium.Cartesian3.fromDegrees(p.lng, p.lat),
+      position: piece ? new Cesium.CallbackProperty(() => Cesium.Cartesian3.fromDegrees(p.lng, p.lat, 10 * U * growOf(p.id)), false) : Cesium.Cartesian3.fromDegrees(p.lng, p.lat),
       properties:{placeId:p.id},
       billboard:(piece || (atStay && p.id !== selId)) ? undefined : {image:pinImage(p.kind, col, p.status === "idea"), width:p.id === selId ? 44 : 34, height:p.id === selId ? 44 : 34,
         heightReference:Cesium.HeightReference.CLAMP_TO_GROUND, verticalOrigin:Cesium.VerticalOrigin.CENTER,

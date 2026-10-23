@@ -246,3 +246,5 @@ button.crow:hover{background:var(--panel)}
 @media (prefers-reduced-motion:reduce){.tring,.tcard{transition:none}}
 @media (max-width:820px){#helpBtn{padding:6px 8px;font-size:12px}}
 .introlink{display:block;text-align:center;font-weight:700;font-size:14px;color:inherit;margin-top:4px}
+#introBtn{text-decoration:none}
+@media (max-width:820px){#introBtn{padding:6px 8px;font-size:12px}}
