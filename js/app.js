@@ -2,7 +2,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/fireba
 import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, onSnapshot, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-storage.js";
-import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610231018";
+import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610231041";
 
 /* ===================== helpers ===================== */
 const $ = s => document.querySelector(s);
@@ -293,7 +293,7 @@ function rescaleModels(force){
   if (!force && lastU && Math.abs(u - lastU) / lastU < 0.15) return;
   U = u; lastU = u;
   for (const [key, s] of modelSpecs) buildModel(key, s);
-  viewer.scene.requestRender();
+  kickRender();
 }
 /* Custom low-poly pieces for specific confirmed places (keyed by place id).
    Units: 1 = U meters. x = east, y = north, z = up (part center). h/pt/roll = heading/pitch/roll in degrees. */
@@ -355,6 +355,17 @@ const GLB = {
   aquarium:      {uri:"models/aquarium_meshy.glb", width:1.9, size:13, heading:90},   // Meshy model, optimized (my code-built one: models/aquarium.glb)
   "stay:sc":     {uri:"models/oslovar.glb",  width:1.9, size:15,  heading:90}      // Meshy model, optimized
 };
+// the piece for the place open in the panel stands taller so it's easy to see
+const SEL_GROW = 3;
+const growOf = id => id && id === selId ? SEL_GROW : 1;
+let lastSel = null;
+function regrowSelected(){
+  if (lastSel === selId) return;
+  for (const id of [lastSel, selId]) { const k = "place:" + id; if (id && modelSpecs.has(k)) buildModel(k, modelSpecs.get(k)); }
+  lastSel = selId; kickRender();
+}
+// pieces are built in the background; ask for a few redraws so the new size shows without touching the map
+function kickRender(){ if (!viewer) return; for (const ms of [0, 200, 500, 1000, 1800]) setTimeout(() => viewer.scene.requestRender(), ms); }
 function buildModel(key, s){
   const Cesium = C();
   const old = ents.models.get(key);
@@ -364,7 +375,7 @@ function buildModel(key, s){
     const pos = Cesium.Cartesian3.fromDegrees(s.ll[0], s.ll[1]);
     const e = viewer.entities.add({position:pos, properties:s.placeId ? {placeId:s.placeId} : undefined,
       orientation:Cesium.Transforms.headingPitchRollQuaternion(pos, new Cesium.HeadingPitchRoll(Cesium.Math.toRadians(gl.heading || 0), 0, 0)),
-      model:{uri:gl.uri + "?v=202610231018", scale:new Cesium.CallbackProperty(() => U * gl.size / gl.width, false), heightReference:Cesium.HeightReference.CLAMP_TO_GROUND,
+      model:{uri:gl.uri + "?v=202610231041", scale:new Cesium.CallbackProperty(() => U * gl.size / gl.width * growOf(s.placeId), false), heightReference:Cesium.HeightReference.CLAMP_TO_GROUND,
         shadows:Cesium.ShadowMode.CAST_ONLY, silhouetteColor:Cesium.Color.fromCssColorString(s.accent || "#13603f"), silhouetteSize:2}});
     const list = [e]; list.glb = true;
     ents.models.set(key, list);
@@ -372,8 +383,8 @@ function buildModel(key, s){
     return;
   }
   if (old) for (const e of old) viewer.entities.remove(e);
-  const list = [];
-  const mLon = U / (111320*Math.cos(s.ll[1]*Math.PI/180)), mLat = U / 110540;
+  const list = [], UL = U * growOf(s.placeId);   // local unit, grown when selected
+  const mLon = UL / (111320*Math.cos(s.ll[1]*Math.PI/180)), mLat = UL / 110540;
   const parts = partsFor(s.kind, s.accent, s.placeId).map(p => ({...p, z:p.z + 0.22}));
   // board-game stand: a cream disc with a colored rim under every piece
   let r = 0;
@@ -382,14 +393,14 @@ function buildModel(key, s){
   parts.unshift({t:"cyl", x:0,y:0,z:0.07, len:0.14, r:r+0.22, rt:r+0.22, c:s.accent || "#13603f"}, {t:"cyl", x:0,y:0,z:0.17, len:0.1, r, rt:r, c:"#f6f1e7"});
   const SH = Cesium.ShadowMode.CAST_ONLY;   // pieces cast soft shadows on the map; no self-shadow streaks
   for (const p of parts) {
-    const pos = Cesium.Cartesian3.fromDegrees(s.ll[0] + p.x*mLon, s.ll[1] + p.y*mLat, p.z*U);
+    const pos = Cesium.Cartesian3.fromDegrees(s.ll[0] + p.x*mLon, s.ll[1] + p.y*mLat, p.z*UL);
     const color = Cesium.Color.fromCssColorString(p.c);
     const base = {position:pos, properties:s.placeId ? {placeId:s.placeId} : undefined};
     if (p.t === "box") {
       if (p.roll || p.h || p.pt) base.orientation = Cesium.Transforms.headingPitchRollQuaternion(pos, new Cesium.HeadingPitchRoll(Cesium.Math.toRadians(p.h||0), Cesium.Math.toRadians(p.pt||0), Cesium.Math.toRadians(p.roll||0)));
-      base.box = {dimensions:new Cesium.Cartesian3(p.dim[0]*U, p.dim[1]*U, p.dim[2]*U), material:color, heightReference:Cesium.HeightReference.RELATIVE_TO_GROUND, shadows:SH};
+      base.box = {dimensions:new Cesium.Cartesian3(p.dim[0]*UL, p.dim[1]*UL, p.dim[2]*UL), material:color, heightReference:Cesium.HeightReference.RELATIVE_TO_GROUND, shadows:SH};
     } else {
-      base.cylinder = {length:p.len*U, topRadius:p.rt*U, bottomRadius:p.r*U, material:color, heightReference:Cesium.HeightReference.RELATIVE_TO_GROUND, slices:24, shadows:SH};
+      base.cylinder = {length:p.len*UL, topRadius:p.rt*UL, bottomRadius:p.r*UL, material:color, heightReference:Cesium.HeightReference.RELATIVE_TO_GROUND, slices:24, shadows:SH};
     }
     list.push(viewer.entities.add(base));
   }
@@ -466,7 +477,7 @@ function syncPins(){
     const piece = p.status === "confirmed" && !atStay;
     const e = pinDS.entities.add({
       // confirmed places: the name floats just above the top of their game piece
-      position: piece ? new Cesium.CallbackProperty(() => Cesium.Cartesian3.fromDegrees(p.lng, p.lat, 7.4 * U), false) : Cesium.Cartesian3.fromDegrees(p.lng, p.lat),
+      position: piece ? new Cesium.CallbackProperty(() => Cesium.Cartesian3.fromDegrees(p.lng, p.lat, 7.4 * U * growOf(p.id)), false) : Cesium.Cartesian3.fromDegrees(p.lng, p.lat),
       properties:{placeId:p.id},
       billboard:(p.status === "confirmed" && !atStay) ? undefined : {image:pinImage(p.kind, col, p.status === "idea"), width:p.id === selId ? 44 : 34, height:p.id === selId ? 44 : 34,
         heightReference:Cesium.HeightReference.CLAMP_TO_GROUND, verticalOrigin:Cesium.VerticalOrigin.CENTER,
@@ -481,6 +492,7 @@ function syncPins(){
     if (p.status === "confirmed" && !atStay) addModel("place:" + p.id, p.kind, [p.lng,p.lat], col, p.id); else removeModel("place:" + p.id);
   }
   for (const [id, v] of ents.pins) if (!seen.has(id)) { pinDS.entities.remove(v.e); ents.pins.delete(id); removeModel("place:" + id); }
+  regrowSelected();
 }
 
 /* cars: toy-car game pieces that turn with the road */
@@ -516,7 +528,7 @@ function drawCars(){
     ents.cars[g + ":parts"] = parts;
     // label + camera target
     ents.cars[g] = viewer.entities.add({
-      viewFrom:new Cesium.Cartesian3(-500, -1000, 700),
+      viewFrom:new Cesium.Cartesian3(-2600, -5200, 4200),   // ~7 km back: roads, towns and both cars stay readable
       position:new Cesium.CallbackProperty(() => { const ll = spot(carAt(g, t)); return Cesium.Cartesian3.fromDegrees(ll[0], ll[1]); }, false),
       label:{text:G()[g].short, font:"700 12px Atkinson Hyperlegible, sans-serif", fillColor:Cesium.Color.WHITE, showBackground:true,
         backgroundColor:Cesium.Color.fromCssColorString(gcol(g)), pixelOffset:new Cesium.Cartesian2(0, -34),
@@ -726,7 +738,7 @@ function viewPlaces(){
 function openPlace(id){
   selId = id; tab = "place"; render(); syncPins(); toggleSheet(true);
   const p = places.find(x => x.id === id);
-  if (p && p.lng != null) { stopFollow(); flyTo([p.lng,p.lat], 1200); }
+  if (p && p.lng != null) { stopFollow(); flyTo([p.lng,p.lat], 1100); }
 }
 let distBox = null;
 function renderDistances(){
