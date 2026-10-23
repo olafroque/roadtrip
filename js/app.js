@@ -2,7 +2,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/fireba
 import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, onSnapshot, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-storage.js";
-import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610231109";
+import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610231148";
 
 /* ===================== helpers ===================== */
 const $ = s => document.querySelector(s);
@@ -204,7 +204,9 @@ async function initMap(){
     const ph = picked?.id?.properties?.photoId?.getValue();
     if (ph) { openPhoto(ph); return; }
     const id = picked?.id?.properties?.placeId?.getValue();
-    if (id) openPlace(id);
+    if (id) { openPlace(id); return; }
+    const sk = picked?.id?.properties?.stayKey?.getValue();
+    if (sk) openStay(sk);
   }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
   initPins();
   initPhotoLayer();
@@ -362,14 +364,20 @@ const GLB = {
 // the piece for the place open in the panel stands taller so it's easy to see
 const SEL_GROW = 3;
 const growOf = id => id && id === selId ? SEL_GROW : 1;
-let lastSel = null;
+let selStay = null;
+const selKeys = () => [selId ? "place:" + selId : null, selStay ? "stay:" + selStay : null].filter(Boolean);
+const growKey = key => selKeys().includes(key) ? SEL_GROW : 1;
+let lastKeys = [];
 function regrowSelected(){
-  if (lastSel === selId) return;
-  for (const id of [lastSel, selId]) { const k = "place:" + id; if (id && modelSpecs.has(k)) buildModel(k, modelSpecs.get(k)); }
-  lastSel = selId; kickRender();
+  const now = selKeys();
+  if (now.join() === lastKeys.join()) return;
+  for (const k of new Set([...lastKeys, ...now])) if (modelSpecs.has(k)) buildModel(k, modelSpecs.get(k));
+  lastKeys = now; kickRender();
 }
 // pieces are built in the background; ask for a few redraws so the new size shows without touching the map
 function kickRender(){ if (!viewer) return; for (const ms of [0, 200, 500, 1000, 1800]) setTimeout(() => viewer.scene.requestRender(), ms); }
+// what a click on a piece opens: a place, or a stay (house or hotel)
+const pieceProps = (key, s) => s.placeId ? {placeId:s.placeId} : key.startsWith("stay:") ? {stayKey:key.slice(5)} : undefined;
 function buildModel(key, s){
   const Cesium = C();
   const old = ents.models.get(key);
@@ -377,9 +385,9 @@ function buildModel(key, s){
   if (gl) {
     if (old && old.glb) return;   // already on the map; its scale follows U on its own
     const pos = Cesium.Cartesian3.fromDegrees(s.ll[0], s.ll[1]);
-    const e = viewer.entities.add({position:pos, properties:s.placeId ? {placeId:s.placeId} : undefined,
+    const e = viewer.entities.add({position:pos, properties:pieceProps(key, s),
       orientation:Cesium.Transforms.headingPitchRollQuaternion(pos, new Cesium.HeadingPitchRoll(Cesium.Math.toRadians(gl.heading || 0), 0, 0)),
-      model:{uri:gl.uri + "?v=202610231109", scale:new Cesium.CallbackProperty(() => U * gl.size / gl.width * growOf(s.placeId), false), heightReference:Cesium.HeightReference.CLAMP_TO_GROUND,
+      model:{uri:gl.uri + "?v=202610231148", scale:new Cesium.CallbackProperty(() => U * gl.size / gl.width * growKey(key), false), heightReference:Cesium.HeightReference.CLAMP_TO_GROUND,
         shadows:Cesium.ShadowMode.CAST_ONLY, silhouetteColor:Cesium.Color.fromCssColorString(s.accent || "#13603f"), silhouetteSize:2}});
     const list = [e]; list.glb = true;
     ents.models.set(key, list);
@@ -387,7 +395,7 @@ function buildModel(key, s){
     return;
   }
   if (old) for (const e of old) viewer.entities.remove(e);
-  const list = [], UL = U * growOf(s.placeId);   // local unit, grown when selected
+  const list = [], UL = U * growKey(key);   // local unit, grown when selected
   const mLon = UL / (111320*Math.cos(s.ll[1]*Math.PI/180)), mLat = UL / 110540;
   const parts = partsFor(s.kind, s.accent, s.placeId).map(p => ({...p, z:p.z + 0.22}));
   // board-game stand: a cream disc with a colored rim under every piece
@@ -399,7 +407,7 @@ function buildModel(key, s){
   for (const p of parts) {
     const pos = Cesium.Cartesian3.fromDegrees(s.ll[0] + p.x*mLon, s.ll[1] + p.y*mLat, p.z*UL);
     const color = Cesium.Color.fromCssColorString(p.c);
-    const base = {position:pos, properties:s.placeId ? {placeId:s.placeId} : undefined};
+    const base = {position:pos, properties:pieceProps(key, s)};
     if (p.t === "box") {
       if (p.roll || p.h || p.pt) base.orientation = Cesium.Transforms.headingPitchRollQuaternion(pos, new Cesium.HeadingPitchRoll(Cesium.Math.toRadians(p.h||0), Cesium.Math.toRadians(p.pt||0), Cesium.Math.toRadians(p.roll||0)));
       base.box = {dimensions:new Cesium.Cartesian3(p.dim[0]*UL, p.dim[1]*UL, p.dim[2]*UL), material:color, heightReference:Cesium.HeightReference.RELATIVE_TO_GROUND, shadows:SH};
@@ -423,7 +431,7 @@ function drawStays(){
   for (const k in STAYS()) {
     const s = STAYS()[k]; if (!s.model) continue;
     addModel("stay:" + k, s.model, s.ll, "#13603f");
-    ents.stays.push(viewer.entities.add({position:Cesium.Cartesian3.fromDegrees(s.ll[0], s.ll[1]),
+    ents.stays.push(viewer.entities.add({position:Cesium.Cartesian3.fromDegrees(s.ll[0], s.ll[1]), properties:{stayKey:k},
       label:{text:s.short || s.name, font:"700 14px Atkinson Hyperlegible, sans-serif", fillColor:Cesium.Color.WHITE, outlineColor:Cesium.Color.BLACK, outlineWidth:4,
         style:Cesium.LabelStyle.FILL_AND_OUTLINE, verticalOrigin:Cesium.VerticalOrigin.TOP, pixelOffset:new Cesium.Cartesian2(0, 14),
         heightReference:Cesium.HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance:Number.POSITIVE_INFINITY,
@@ -483,7 +491,7 @@ function syncPins(){
       // confirmed places: the name floats just above the top of their game piece
       position: piece ? new Cesium.CallbackProperty(() => Cesium.Cartesian3.fromDegrees(p.lng, p.lat, 7.4 * U * growOf(p.id)), false) : Cesium.Cartesian3.fromDegrees(p.lng, p.lat),
       properties:{placeId:p.id},
-      billboard:(p.status === "confirmed" && !atStay) ? undefined : {image:pinImage(p.kind, col, p.status === "idea"), width:p.id === selId ? 44 : 34, height:p.id === selId ? 44 : 34,
+      billboard:(piece || (atStay && p.id !== selId)) ? undefined : {image:pinImage(p.kind, col, p.status === "idea"), width:p.id === selId ? 44 : 34, height:p.id === selId ? 44 : 34,
         heightReference:Cesium.HeightReference.CLAMP_TO_GROUND, verticalOrigin:Cesium.VerticalOrigin.CENTER,
         disableDepthTestDistance:Number.POSITIVE_INFINITY, pixelOffset:new Cesium.Cartesian2(0, -24)},
       label:atStay && p.id !== selId ? undefined : {text:p.name, font:"700 13px Atkinson Hyperlegible, sans-serif", fillColor:Cesium.Color.WHITE, outlineColor:Cesium.Color.BLACK, outlineWidth:3,
@@ -656,10 +664,14 @@ function showMe(ll){
       pixelOffset:new Cesium.Cartesian2(0, -20), heightReference:Cesium.HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance:Number.POSITIVE_INFINITY}});
   viewer.scene.requestRender();
 }
-function goStay(k){ stopFollow(); flyTo(STAYS()[k].ll, 1800); if (matchMedia("(max-width: 820px)").matches) toggleSheet(false); }
+function goStay(k){ openStay(k); if (matchMedia("(max-width: 820px)").matches) toggleSheet(false); }
+function openStay(k){
+  selId = null; selStay = k; tab = "stay"; render(); syncPins(); toggleSheet(true);
+  stopFollow(); flyTo(STAYS()[k].ll, 1100);
+}
 
 /* ===================== panel ===================== */
-function setTab(n){ tab = n; render(); }
+function setTab(n){ tab = n; if (n !== "stay") { selStay = null; regrowSelected(); } render(); }
 $("#tabPlaces").onclick = () => { selId = null; setTab("places"); syncPins(); };
 $("#tabAdd").onclick = () => { if (!draft) newDraft(); setTab("add"); };
 $("#tabPlan").onclick = () => setTab("plan");
@@ -680,6 +692,7 @@ function render(){
   else if (tab === "place") v.append(...viewPlace());
   else if (tab === "add") v.append(...viewAdd());
   else if (tab === "photos") v.append(...viewPhotos());
+  else if (tab === "stay") v.append(...viewStay());
   else v.append(...viewPlan());
 }
 function icon(p){
@@ -740,7 +753,7 @@ function viewPlaces(){
   return out;
 }
 function openPlace(id){
-  selId = id; tab = "place"; render(); syncPins(); toggleSheet(true);
+  selStay = null; selId = id; tab = "place"; render(); syncPins(); toggleSheet(true);
   const p = places.find(x => x.id === id);
   if (p && p.lng != null) { stopFollow(); flyTo([p.lng,p.lat], 1100); }
 }
@@ -990,8 +1003,8 @@ function shieldsFor(road){
 let openDays = null, importMsg = "";
 const openCars = new Set();
 // where each car sleeps, in order, with nights; tap to see it on the map
-function viewStays(){
-  const fmtD = new Intl.DateTimeFormat("en-US",{timeZone:TZ, weekday:"short", month:"short", day:"numeric"});
+const fmtD = new Intl.DateTimeFormat("en-US",{timeZone:TZ, weekday:"short", month:"short", day:"numeric"});
+function stayRows(){
   const rows = [];
   for (const g of ["family","friends"]) {
     const plan = PLAN()[g];
@@ -1005,7 +1018,10 @@ function viewStays(){
       rows.push({g, k, from, to, nights});
     }
   }
-  rows.sort((a,b) => a.from - b.from);
+  return rows.sort((a,b) => a.from - b.from);
+}
+function viewStays(){
+  const rows = stayRows();
   const box = h("div",{class:"locbox", style:"margin-top:4px"}, h("div",{class:"st"}, h("b",null,"Where we sleep. "), "Tap one to see it on the map."));
   for (const r of rows) {
     const st = STAYS()[r.k];
@@ -1017,6 +1033,33 @@ function viewStays(){
   return box;
 }
 const dayStart = tm => T(dayKey(tm) + "T00:00");
+// a house or hotel: address, who sleeps there and when, and what's planned there
+function viewStay(){
+  const k = selStay, s = STAYS()[k];
+  if (!s) return [h("div",{class:"empty"}, "That stay isn't in the plan anymore.")];
+  const out = [h("button",{class:"back", onclick:() => setTab("plan")},"← Drive plan")];
+  const addr = s.name.startsWith((s.short || "") + ", ") ? s.name.slice(s.short.length + 2) : s.name;
+  out.push(h("div",{class:"dt"}, h("h2",null, s.short || s.name),
+    h("div",{style:"color:var(--muted);font-size:14px;margin:2px 0 12px"}, (s.model === "hotel" ? "Hotel" : s.model === "house" ? "House" : "Stay") + " · " + addr)));
+  const rows = stayRows().filter(r => r.k === k);
+  const box = h("div",{class:"locbox"}, h("div",{class:"st"}, h("b",null,"Who sleeps here")));
+  if (!rows.length) box.append(h("div",{class:"mt"}, "Start and end point. Nobody sleeps here on the trip."));
+  for (const r of rows) box.append(h("div",{class:"crow stayrow", style:"cursor:default"},
+    h("i",{class:"dot", style:`background:var(${G()[r.g].color})`}),
+    h("span",{class:"cn"}, h("b",null, G()[r.g].label), h("br"), h("span",{class:"cm"}, fmtD.format(r.from) + " to " + fmtD.format(r.to))),
+    h("span",{class:"cm"}, r.nights + (r.nights === 1 ? " night" : " nights"))));
+  out.push(box);
+  const here = places.filter(p => p.lng != null && hav(s.ll, [p.lng, p.lat]) < 0.15);
+  if (here.length) {
+    out.push(h("div",{class:"dayhead"}, "Planned here"));
+    for (const p of here.sort((a,b) => (a.day||"9").localeCompare(b.day||"9"))) out.push(h("button",{class:"crow", onclick:() => openPlace(p.id)},
+      h("span",{class:"ct"}, p.day ? dayName(p.day).split(",")[0] : "Any day"), h("span",{class:"cn"}, p.name), h("span",{class:"cm"}, p.status)));
+  }
+  out.push(h("div",{class:"btns"},
+    h("button",{class:"btn primary", onclick:() => flyTo(s.ll, 700)}, "Zoom in"),
+    h("a",{class:"btn", href:"https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(s.name), target:"_blank", rel:"noopener"}, "Directions")));
+  return out;
+}
 function viewPlan(){
   const out = [];
   const M = {family:mileage("family"), friends:mileage("friends")};
