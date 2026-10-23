@@ -1,7 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, onSnapshot, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
-import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610221829";
+import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610221832";
 
 /* ===================== helpers ===================== */
 const $ = s => document.querySelector(s);
@@ -347,7 +347,7 @@ function addModel(key, kind, ll, accent, placeId){
    width = the model's footprint in its own units; size = how wide it should stand on the board, in game units;
    heading = degrees to turn it so its front faces the street/camera. */
 const GLB = {
-  aquarium:      {uri:"models/aquarium.glb", width:46,  size:10,  heading:90},    // built with tools/lowpoly.py
+  aquarium:      {uri:"models/aquarium_meshy.glb", width:1.9, size:13, heading:90},   // Meshy model, optimized (my code-built one: models/aquarium.glb)
   "stay:sc":     {uri:"models/oslovar.glb",  width:1.9, size:15,  heading:90}      // Meshy model, optimized
 };
 function buildModel(key, s){
