@@ -2,7 +2,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/fireba
 import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, onSnapshot, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-storage.js";
-import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610231041";
+import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610231109";
 
 /* ===================== helpers ===================== */
 const $ = s => document.querySelector(s);
@@ -154,8 +154,12 @@ async function initMap(){
   // Keep the camera over California so it never streams tiles for the rest of the world.
   viewer.scene.screenSpaceCameraController.maximumZoomDistance = 750000;
   viewer.scene.screenSpaceCameraController.enableCollisionDetection = true;
+  // Cesium's built-in double-click "track this object" fights our own Follow; turn it off.
+  viewer.cesiumWidget.screenSpaceEventHandler.removeInputAction(Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
   viewer.camera.moveEnd.addEventListener(() => {
-    const c = Cesium.Cartographic.fromCartesian(viewer.camera.position);
+    // while following a car the camera works in the car's local frame; skip the clamp so they don't fight
+    if (viewer.trackedEntity) { rescaleModels(false); return; }
+    const c = Cesium.Cartographic.fromCartesian(viewer.camera.positionWC);
     const lon = Cesium.Math.toDegrees(c.longitude), lat = Cesium.Math.toDegrees(c.latitude);
     const cl = [Math.min(-113.8, Math.max(-125.2, lon)), Math.min(42.3, Math.max(31.0, lat))];
     if (Math.abs(cl[0]-lon) > 0.01 || Math.abs(cl[1]-lat) > 0.01)
@@ -375,7 +379,7 @@ function buildModel(key, s){
     const pos = Cesium.Cartesian3.fromDegrees(s.ll[0], s.ll[1]);
     const e = viewer.entities.add({position:pos, properties:s.placeId ? {placeId:s.placeId} : undefined,
       orientation:Cesium.Transforms.headingPitchRollQuaternion(pos, new Cesium.HeadingPitchRoll(Cesium.Math.toRadians(gl.heading || 0), 0, 0)),
-      model:{uri:gl.uri + "?v=202610231041", scale:new Cesium.CallbackProperty(() => U * gl.size / gl.width * growOf(s.placeId), false), heightReference:Cesium.HeightReference.CLAMP_TO_GROUND,
+      model:{uri:gl.uri + "?v=202610231109", scale:new Cesium.CallbackProperty(() => U * gl.size / gl.width * growOf(s.placeId), false), heightReference:Cesium.HeightReference.CLAMP_TO_GROUND,
         shadows:Cesium.ShadowMode.CAST_ONLY, silhouetteColor:Cesium.Color.fromCssColorString(s.accent || "#13603f"), silhouetteSize:2}});
     const list = [e]; list.glb = true;
     ents.models.set(key, list);
