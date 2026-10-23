@@ -1,7 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, onSnapshot, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
-import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610221805";
+import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610221829";
 
 /* ===================== helpers ===================== */
 const $ = s => document.querySelector(s);
@@ -343,18 +343,23 @@ function addModel(key, kind, ll, accent, placeId){
   modelSpecs.set(key, {kind, ll, accent, placeId});
   buildModel(key, modelSpecs.get(key));
 }
-/* Hand-built low-poly .glb pieces (tools/lowpoly.py), keyed by place id. Size: model meters / GLB_M = game units. */
-const GLB = { aquarium: "models/aquarium.glb" };
-const GLB_M = 4.4;
+/* .glb game pieces, keyed by place id or by "stay:<key>".
+   width = the model's footprint in its own units; size = how wide it should stand on the board, in game units;
+   heading = degrees to turn it so its front faces the street/camera. */
+const GLB = {
+  aquarium:      {uri:"models/aquarium.glb", width:46,  size:10,  heading:90},    // built with tools/lowpoly.py
+  "stay:sc":     {uri:"models/oslovar.glb",  width:1.9, size:15,  heading:90}      // Meshy model, optimized
+};
 function buildModel(key, s){
   const Cesium = C();
   const old = ents.models.get(key);
-  if (s.placeId && GLB[s.placeId]) {
+  const gl = (s.placeId && GLB[s.placeId]) || GLB[key];
+  if (gl) {
     if (old && old.glb) return;   // already on the map; its scale follows U on its own
     const pos = Cesium.Cartesian3.fromDegrees(s.ll[0], s.ll[1]);
-    const e = viewer.entities.add({position:pos, properties:{placeId:s.placeId},
-      orientation:Cesium.Transforms.headingPitchRollQuaternion(pos, new Cesium.HeadingPitchRoll(Math.PI/2, 0, 0)),   // front faces south
-      model:{uri:GLB[s.placeId] + "?v=1", scale:new Cesium.CallbackProperty(() => U / GLB_M, false), heightReference:Cesium.HeightReference.CLAMP_TO_GROUND,
+    const e = viewer.entities.add({position:pos, properties:s.placeId ? {placeId:s.placeId} : undefined,
+      orientation:Cesium.Transforms.headingPitchRollQuaternion(pos, new Cesium.HeadingPitchRoll(Cesium.Math.toRadians(gl.heading || 0), 0, 0)),
+      model:{uri:gl.uri + "?v=2", scale:new Cesium.CallbackProperty(() => U * gl.size / gl.width, false), heightReference:Cesium.HeightReference.CLAMP_TO_GROUND,
         shadows:Cesium.ShadowMode.CAST_ONLY, silhouetteColor:Cesium.Color.fromCssColorString(s.accent || "#13603f"), silhouetteSize:2}});
     const list = [e]; list.glb = true;
     ents.models.set(key, list);
@@ -486,16 +491,19 @@ function drawCars(){
   for (const g of ["friends","family"]) {
     for (const e of (ents.cars[g + ":parts"] || [])) viewer.entities.remove(e);
     if (ents.cars[g]) viewer.entities.remove(ents.cars[g]);
-    const CU = () => Math.max(U * 2.2, 10);   // cars a bit oversized so they read as game tokens
+    const CU = () => Math.max(U * 1.1, 6);    // cars slightly oversized so they read as game tokens
+    // when parked (at a stay or a stop), the two cars sit side by side in front of the piece instead of on top of it
+    const park = g === "family" ? [-3.4, -11] : [3.4, -11];
+    const spot = c => c.mode === "drive" ? c.ll : [c.ll[0] + park[0]*U / (111320*Math.cos(c.ll[1]*Math.PI/180)), c.ll[1] + park[1]*U / 110540];
     const parts = CAR_PARTS(gcol(g)).map(pt => {
       const posAt = () => {
-        const c = carAt(g, t), b = c.bearing || 0, u = CU();
+        const c = carAt(g, t), b = c.mode === "drive" ? (c.bearing || 0) : 0, u = CU(), ll = spot(c);
         const east = pt.f*u*Math.sin(b) + pt.r*u*Math.cos(b), north = pt.f*u*Math.cos(b) - pt.r*u*Math.sin(b);
-        return Cesium.Cartesian3.fromDegrees(c.ll[0] + east / (111320*Math.cos(c.ll[1]*Math.PI/180)), c.ll[1] + north / 110540, pt.z*u);
+        return Cesium.Cartesian3.fromDegrees(ll[0] + east / (111320*Math.cos(ll[1]*Math.PI/180)), ll[1] + north / 110540, pt.z*u);
       };
       return viewer.entities.add({
         position:new Cesium.CallbackProperty(posAt, false),
-        orientation:new Cesium.CallbackProperty(() => Cesium.Transforms.headingPitchRollQuaternion(posAt(), new Cesium.HeadingPitchRoll((carAt(g, t).bearing || 0) - Math.PI/2, 0, 0)), false),
+        orientation:new Cesium.CallbackProperty(() => Cesium.Transforms.headingPitchRollQuaternion(posAt(), new Cesium.HeadingPitchRoll((() => { const c = carAt(g, t); return c.mode === "drive" ? (c.bearing || 0) : 0; })() - Math.PI/2, 0, 0)), false),
         box:{dimensions:new Cesium.CallbackProperty(() => new Cesium.Cartesian3(pt.dim[0]*CU(), pt.dim[1]*CU(), pt.dim[2]*CU()), false),
           material:Cesium.Color.fromCssColorString(pt.c), heightReference:Cesium.HeightReference.RELATIVE_TO_GROUND, shadows:Cesium.ShadowMode.CAST_ONLY}
       });
@@ -504,7 +512,7 @@ function drawCars(){
     // label + camera target
     ents.cars[g] = viewer.entities.add({
       viewFrom:new Cesium.Cartesian3(-500, -1000, 700),
-      position:new Cesium.CallbackProperty(() => { const c = carAt(g, t); return Cesium.Cartesian3.fromDegrees(c.ll[0], c.ll[1]); }, false),
+      position:new Cesium.CallbackProperty(() => { const ll = spot(carAt(g, t)); return Cesium.Cartesian3.fromDegrees(ll[0], ll[1]); }, false),
       label:{text:G()[g].short, font:"700 12px Atkinson Hyperlegible, sans-serif", fillColor:Cesium.Color.WHITE, showBackground:true,
         backgroundColor:Cesium.Color.fromCssColorString(gcol(g)), pixelOffset:new Cesium.Cartesian2(0, -34),
         heightReference:Cesium.HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance:Number.POSITIVE_INFINITY}
