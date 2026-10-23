@@ -1,7 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, onSnapshot, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
-import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610221325";
+import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610221702";
 
 /* ===================== helpers ===================== */
 const $ = s => document.querySelector(s);
@@ -170,7 +170,18 @@ async function initMap(){
   g.showGroundAtmosphere = false;
   g.enableLighting = false;
   // OpenStreetMap's standard tiles: free, no key, street names and business labels.
-  viewer.imageryLayers.addImageryProvider(new Cesium.OpenStreetMapImageryProvider({url:"https://tile.openstreetmap.org/", maximumLevel:19}));
+  const osm = viewer.imageryLayers.addImageryProvider(new Cesium.OpenStreetMapImageryProvider({url:"https://tile.openstreetmap.org/", maximumLevel:19}));
+  // softer "board" look: calmer colors so the pieces stand out
+  osm.saturation = 0.55; osm.brightness = 1.06; osm.contrast = 0.92; osm.gamma = 1.08;
+  // fixed early-afternoon sun so shadows always fall the same way
+  viewer.clock.currentTime = Cesium.JulianDate.fromIso8601("2026-11-22T21:00:00Z");
+  viewer.clock.shouldAnimate = false;
+  if (!LOW) {
+    viewer.shadows = true;
+    const sm = viewer.scene.shadowMap;
+    sm.softShadows = true; sm.darkness = 0.45; sm.size = 2048; sm.maximumDistance = 60000;
+    g.shadows = Cesium.ShadowMode.RECEIVE_ONLY;
+  }
   const click = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
   // Drop mode: treat a short press as a tap even if the mouse or finger moved a little.
   let downAt = null;
@@ -277,7 +288,26 @@ function rescaleModels(force){
   for (const [key, s] of modelSpecs) buildModel(key, s);
   viewer.scene.requestRender();
 }
-function partsFor(kind, accent){
+/* Custom low-poly pieces for specific confirmed places (keyed by place id).
+   Units: 1 = U meters. x = east, y = north, z = up (part center). h/pt/roll = heading/pitch/roll in degrees. */
+const CB = (x,y,z,w,d,hgt,c,o={}) => ({t:"box", x,y,z, dim:[w,d,hgt], c, roll:o.roll||0, h:o.h||0, pt:o.pt||0});
+const CC = (x,y,z,len,r,rt,c) => ({t:"cyl", x,y,z, len, r, rt:rt ?? r, c});
+const CUSTOM = {
+  // Monterey Bay Aquarium: old cannery hall, boiler stack, glass front, the bay with kelp and a whale tail
+  aquarium: () => [
+    CB(0.6,0,1.2, 6.2,4,2.4,"#e9dfc8"),
+    CB(1.0,0,2.4, 5.4,2.83,2.83,"#7d8f99",{roll:45}),
+    CB(-2.6,-0.3,1.9, 2.4,3.4,3.8,"#d9cdb2"), CB(-2.6,-0.3,3.87, 2.6,3.6,0.14,"#7d8f99"),
+    CC(-3.2,1.1,3.9, 3.8,0.36,0.3,"#a0705a"), CC(-3.2,1.1,5.7, 0.25,0.42,0.42,"#2f3a40"),
+    CB(1.2,-2.03,1.35, 4.4,0.08,0.9,"#8fd3f0"), CB(1.2,-2.05,0.5, 1.2,0.1,0.9,"#2f3a40"),
+    CB(0,3.45,0.08, 9,2.6,0.16,"#3d8fc6"),
+    CC(-2.6,3.6,0.6, 1.0,0.12,0.04,"#3f8f3a"), CC(-2.1,4.0,0.5, 0.8,0.1,0.04,"#4fa344"), CC(-3.1,4.1,0.45, 0.7,0.1,0.04,"#4fa344"),
+    CC(2.6,3.6,0.45, 0.7,0.28,0.2,"#2d3e50"),
+    CB(2.22,3.6,0.92, 0.9,0.35,0.12,"#2d3e50",{pt:28}), CB(2.98,3.6,0.92, 0.9,0.35,0.12,"#2d3e50",{pt:-28})
+  ]
+};
+function partsFor(kind, accent, placeId){
+  if (placeId && CUSTOM[placeId]) return CUSTOM[placeId]();
   const B = (x,y,z,w,d,hgt,c,roll) => ({t:"box", x,y,z, dim:[w,d,hgt], c, roll});
   const Cy = (x,y,z,len,r,rt,c) => ({t:"cyl", x,y,z, len, r, rt:rt ?? r, c});
   const roofSide = Math.SQRT2 * 1.6; // square rotated 45° spans 3.2 units wide, 1.6 tall
@@ -311,15 +341,22 @@ function buildModel(key, s){
   const old = ents.models.get(key); if (old) for (const e of old) viewer.entities.remove(e);
   const list = [];
   const mLon = U / (111320*Math.cos(s.ll[1]*Math.PI/180)), mLat = U / 110540;
-  for (const p of partsFor(s.kind, s.accent)) {
+  const parts = partsFor(s.kind, s.accent, s.placeId).map(p => ({...p, z:p.z + 0.22}));
+  // board-game stand: a cream disc with a colored rim under every piece
+  let r = 0;
+  for (const p of parts) r = Math.max(r, p.t === "box" ? Math.hypot(Math.abs(p.x) + p.dim[0]/2, Math.abs(p.y) + p.dim[1]/2) : Math.hypot(p.x, p.y) + p.r);
+  r = Math.min(r + 0.35, 7);
+  parts.unshift({t:"cyl", x:0,y:0,z:0.07, len:0.14, r:r+0.22, rt:r+0.22, c:s.accent || "#13603f"}, {t:"cyl", x:0,y:0,z:0.17, len:0.1, r, rt:r, c:"#f6f1e7"});
+  const SH = Cesium.ShadowMode.CAST_ONLY;   // pieces cast soft shadows on the map; no self-shadow streaks
+  for (const p of parts) {
     const pos = Cesium.Cartesian3.fromDegrees(s.ll[0] + p.x*mLon, s.ll[1] + p.y*mLat, p.z*U);
     const color = Cesium.Color.fromCssColorString(p.c);
     const base = {position:pos, properties:s.placeId ? {placeId:s.placeId} : undefined};
     if (p.t === "box") {
-      if (p.roll) base.orientation = Cesium.Transforms.headingPitchRollQuaternion(pos, new Cesium.HeadingPitchRoll(0, 0, Cesium.Math.toRadians(p.roll)));
-      base.box = {dimensions:new Cesium.Cartesian3(p.dim[0]*U, p.dim[1]*U, p.dim[2]*U), material:color, heightReference:Cesium.HeightReference.RELATIVE_TO_GROUND};
+      if (p.roll || p.h || p.pt) base.orientation = Cesium.Transforms.headingPitchRollQuaternion(pos, new Cesium.HeadingPitchRoll(Cesium.Math.toRadians(p.h||0), Cesium.Math.toRadians(p.pt||0), Cesium.Math.toRadians(p.roll||0)));
+      base.box = {dimensions:new Cesium.Cartesian3(p.dim[0]*U, p.dim[1]*U, p.dim[2]*U), material:color, heightReference:Cesium.HeightReference.RELATIVE_TO_GROUND, shadows:SH};
     } else {
-      base.cylinder = {length:p.len*U, topRadius:p.rt*U, bottomRadius:p.r*U, material:color, heightReference:Cesium.HeightReference.RELATIVE_TO_GROUND, slices:20};
+      base.cylinder = {length:p.len*U, topRadius:p.rt*U, bottomRadius:p.r*U, material:color, heightReference:Cesium.HeightReference.RELATIVE_TO_GROUND, slices:24, shadows:SH};
     }
     list.push(viewer.entities.add(base));
   }
@@ -337,7 +374,7 @@ function drawStays(){
   ents.stays = [];
   for (const k in STAYS()) {
     const s = STAYS()[k]; if (!s.model) continue;
-    addModel("stay:" + k, s.model, s.ll, "#888");
+    addModel("stay:" + k, s.model, s.ll, "#13603f");
     ents.stays.push(viewer.entities.add({position:Cesium.Cartesian3.fromDegrees(s.ll[0], s.ll[1]),
       label:{text:s.short || s.name, font:"700 14px Atkinson Hyperlegible, sans-serif", fillColor:Cesium.Color.WHITE, outlineColor:Cesium.Color.BLACK, outlineWidth:4,
         style:Cesium.LabelStyle.FILL_AND_OUTLINE, verticalOrigin:Cesium.VerticalOrigin.TOP, pixelOffset:new Cesium.Cartesian2(0, 14),
@@ -403,7 +440,7 @@ function drawCars(){
         position:new Cesium.CallbackProperty(posAt, false),
         orientation:new Cesium.CallbackProperty(() => Cesium.Transforms.headingPitchRollQuaternion(posAt(), new Cesium.HeadingPitchRoll((carAt(g, t).bearing || 0) - Math.PI/2, 0, 0)), false),
         box:{dimensions:new Cesium.CallbackProperty(() => new Cesium.Cartesian3(pt.dim[0]*CU(), pt.dim[1]*CU(), pt.dim[2]*CU()), false),
-          material:Cesium.Color.fromCssColorString(pt.c), heightReference:Cesium.HeightReference.RELATIVE_TO_GROUND}
+          material:Cesium.Color.fromCssColorString(pt.c), heightReference:Cesium.HeightReference.RELATIVE_TO_GROUND, shadows:Cesium.ShadowMode.CAST_ONLY}
       });
     });
     ents.cars[g + ":parts"] = parts;
