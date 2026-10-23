@@ -1,7 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, onSnapshot, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
-import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610221753";
+import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610221759";
 
 /* ===================== helpers ===================== */
 const $ = s => document.querySelector(s);
@@ -295,17 +295,22 @@ function rescaleModels(force){
 const CB = (x,y,z,w,d,hgt,c,o={}) => ({t:"box", x,y,z, dim:[w,d,hgt], c, roll:o.roll||0, h:o.h||0, pt:o.pt||0});
 const CC = (x,y,z,len,r,rt,c) => ({t:"cyl", x,y,z, len, r, rt:rt ?? r, c});
 const CUSTOM = {
-  // Monterey Bay Aquarium: old cannery hall, boiler stack, glass front, the bay with kelp and a whale tail
+  // Monterey Bay Aquarium front entrance, as a single game piece:
+  // gabled concrete cannery hall facing the street, multi-pane industrial windows, glass entry with canopy,
+  // blue sign band, the three original cannery smokestacks on the side wing, and a whale tail in a pool on the stand.
   aquarium: () => [
-    CB(0.6,0,1.2, 6.2,4,2.4,"#e9dfc8"),
-    CB(1.0,0,2.4, 5.4,2.83,2.83,"#7d8f99",{roll:45}),
-    CB(-2.6,-0.3,1.9, 2.4,3.4,3.8,"#d9cdb2"), CB(-2.6,-0.3,3.87, 2.6,3.6,0.14,"#7d8f99"),
-    CC(-3.2,1.1,3.9, 3.8,0.36,0.3,"#a0705a"), CC(-3.2,1.1,5.7, 0.25,0.42,0.42,"#2f3a40"),
-    CB(1.2,-2.03,1.35, 4.4,0.08,0.9,"#8fd3f0"), CB(1.2,-2.05,0.5, 1.2,0.1,0.9,"#2f3a40"),
-    CB(0,3.45,0.08, 9,2.6,0.16,"#3d8fc6"),
-    CC(-2.6,3.6,0.6, 1.0,0.12,0.04,"#3f8f3a"), CC(-2.1,4.0,0.5, 0.8,0.1,0.04,"#4fa344"), CC(-3.1,4.1,0.45, 0.7,0.1,0.04,"#4fa344"),
-    CC(2.6,3.6,0.45, 0.7,0.28,0.2,"#2d3e50"),
-    CB(2.22,3.6,0.92, 0.9,0.35,0.12,"#2d3e50",{pt:28}), CB(2.98,3.6,0.92, 0.9,0.35,0.12,"#2d3e50",{pt:-28})
+    CB(0,0.2,1.5, 5.6,3.6,3.0,"#dcd7cb"),
+    ...[0,1,2,3,4].map(k => CB(0,0.2,3.0 + 0.27 + k*0.54, 5.9*(1 - k/5.2),3.9,0.54, k % 2 ? "#97a3aa" : "#8d9aa1")),   // stepped gable roof, ridge front-to-back
+    ...[-2.0,-0.7,0.7,2.0].map(x => CB(x,-1.62,2.1, 0.9,0.06,0.7,"#2f4b5f")),
+    CB(-2.0,-1.62,1.0, 0.9,0.06,0.7,"#2f4b5f"), CB(2.0,-1.62,1.0, 0.9,0.06,0.7,"#2f4b5f"),
+    CB(0,-1.63,2.75, 3.6,0.06,0.34,"#1f6fa5"), CB(0,-1.65,2.75, 2.6,0.04,0.1,"#ffffff"),
+    CB(0,-2.1,0.75, 2.2,1.0,1.5,"#9fd8f0"), CB(0,-2.2,1.6, 2.8,1.3,0.18,"#2f3a40"), CB(0,-2.61,0.55, 0.9,0.04,1.1,"#2f3a40"),
+    CB(-3.6,0.8,1.0, 1.8,2.6,2.0,"#cfc9bb"), CB(-3.6,0.8,2.06, 1.9,2.7,0.12,"#8d9aa1"),
+    CC(-3.95,0.2,3.6, 3.2,0.3,0.26,"#7a6a60"), CC(-3.25,1.0,3.9, 3.8,0.3,0.26,"#7a6a60"), CC(-3.95,1.6,3.4, 2.8,0.3,0.26,"#7a6a60"),
+    CC(-3.95,0.2,5.25, 0.18,0.34,0.34,"#2f3a40"), CC(-3.25,1.0,5.85, 0.18,0.34,0.34,"#2f3a40"), CC(-3.95,1.6,4.85, 0.18,0.34,0.34,"#2f3a40"),
+    CC(3.3,-2.5,0.03, 0.06,0.95,0.95,"#3d8fc6"),
+    CC(3.3,-2.5,0.4, 0.6,0.22,0.16,"#2d3e50"),
+    CB(2.98,-2.5,0.82, 0.75,0.3,0.1,"#2d3e50",{pt:28}), CB(3.62,-2.5,0.82, 0.75,0.3,0.1,"#2d3e50",{pt:-28})
   ]
 };
 function partsFor(kind, accent, placeId){
@@ -432,15 +437,17 @@ function syncPins(){
     if (cur) pinDS.entities.remove(cur.e);
     const col = gcol(p.who);
     const atStay = Object.values(STAYS()).some(s => s.model && hav(s.ll, [p.lng,p.lat]) < 0.1);
+    const piece = p.status === "confirmed" && !atStay;
     const e = pinDS.entities.add({
-      position:Cesium.Cartesian3.fromDegrees(p.lng, p.lat),
+      // confirmed places: the name floats just above the top of their game piece
+      position: piece ? new Cesium.CallbackProperty(() => Cesium.Cartesian3.fromDegrees(p.lng, p.lat, 7.4 * U), false) : Cesium.Cartesian3.fromDegrees(p.lng, p.lat),
       properties:{placeId:p.id},
       billboard:(p.status === "confirmed" && !atStay) ? undefined : {image:pinImage(p.kind, col, p.status === "idea"), width:p.id === selId ? 44 : 34, height:p.id === selId ? 44 : 34,
         heightReference:Cesium.HeightReference.CLAMP_TO_GROUND, verticalOrigin:Cesium.VerticalOrigin.CENTER,
         disableDepthTestDistance:Number.POSITIVE_INFINITY, pixelOffset:new Cesium.Cartesian2(0, -24)},
       label:atStay && p.id !== selId ? undefined : {text:p.name, font:"700 13px Atkinson Hyperlegible, sans-serif", fillColor:Cesium.Color.WHITE, outlineColor:Cesium.Color.BLACK, outlineWidth:3,
-        style:Cesium.LabelStyle.FILL_AND_OUTLINE, verticalOrigin:Cesium.VerticalOrigin.BOTTOM, pixelOffset:new Cesium.Cartesian2(0, p.status === "confirmed" ? -12 : -48),
-        heightReference:Cesium.HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance:Number.POSITIVE_INFINITY,
+        style:Cesium.LabelStyle.FILL_AND_OUTLINE, verticalOrigin:Cesium.VerticalOrigin.BOTTOM, pixelOffset:new Cesium.Cartesian2(0, piece ? -4 : -48),
+        heightReference: piece ? Cesium.HeightReference.RELATIVE_TO_GROUND : Cesium.HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance:Number.POSITIVE_INFINITY,
         distanceDisplayCondition:new Cesium.DistanceDisplayCondition(0, p.id === selId ? 1e7 : p.status === "confirmed" ? 60000 : 12000)}
     });
     ents.pins.set(p.id, {e, sig});
