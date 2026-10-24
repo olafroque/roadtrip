@@ -2,7 +2,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/fireba
 import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, onSnapshot, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-storage.js";
-import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610231653";
+import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610240659";
 
 /* ===================== helpers ===================== */
 const $ = s => document.querySelector(s);
@@ -361,6 +361,7 @@ function addModel(key, kind, ll, accent, placeId){
 const PIECE_W = 15;
 const GLB = {
   aquarium:      {uri:"models/aquarium_meshy.glb", width:1.9, size:PIECE_W, heading:90},   // Meshy model, optimized (my code-built one: models/aquarium.glb)
+  labicyclette:  {uri:"models/labicyclette.glb", width:1.9, size:PIECE_W, heading:90},   // Meshy model, optimized
   "stay:sc":     {uri:"models/oslovar.glb",  width:1.9, size:PIECE_W, heading:90}      // Meshy model, optimized
 };
 // the piece for the place open in the panel stands taller so it's easy to see
@@ -389,7 +390,7 @@ function buildModel(key, s){
     const pos = Cesium.Cartesian3.fromDegrees(s.ll[0], s.ll[1]);
     const e = viewer.entities.add({position:pos, properties:pieceProps(key, s),
       orientation:Cesium.Transforms.headingPitchRollQuaternion(pos, new Cesium.HeadingPitchRoll(Cesium.Math.toRadians(gl.heading || 0), 0, 0)),
-      model:{uri:gl.uri + "?v=202610231653", scale:new Cesium.CallbackProperty(() => U * gl.size / gl.width * growKey(key), false), heightReference:Cesium.HeightReference.CLAMP_TO_GROUND,
+      model:{uri:gl.uri + "?v=202610240659", scale:new Cesium.CallbackProperty(() => U * gl.size / gl.width * growKey(key), false), heightReference:Cesium.HeightReference.CLAMP_TO_GROUND,
         shadows:Cesium.ShadowMode.CAST_ONLY, silhouetteColor:Cesium.Color.fromCssColorString(s.accent || "#13603f"), silhouetteSize:2}});
     const list = [e]; list.glb = true;
     ents.models.set(key, list);
@@ -1330,6 +1331,7 @@ let tourI = -1;
 function startTour(){ tourI = 0; showTour(); }
 function endTour(){
   tourI = -1; $("#tour").hidden = true;
+  if (!store.get("lastVisit")) markNewsSeen();
   try { localStorage.setItem("tourDone", "1"); } catch {}
   if (matchMedia("(max-width: 820px)").matches) toggleSheet(false);
 }
@@ -1366,6 +1368,47 @@ function showTour(){
 document.addEventListener("keydown", e => { if (tourI >= 0 && e.key === "Escape") endTour(); });
 $("#helpBtn").onclick = () => startTour();
 addEventListener("resize", () => { if (tourI >= 0) showTour(); });
+
+
+/* ===================== what's new ===================== */
+// Shown once per device when something new lands: a new game piece (listed here when Claude adds one)
+// and places other people added since this phone or computer last opened the trip.
+const NEWS = [
+  {id:"piece-labicyclette", placeId:"labicyclette", img:"models/labicyclette.jpg", name:"La Bicyclette",
+    text:"The Carmel bistro now stands on the board as its own game piece. Tap it to see it up close."}
+];
+const store = {get:k => { try { return localStorage.getItem(k); } catch { return null; } }, set:(k,v) => { try { localStorage.setItem(k, v); } catch {} }};
+function seenNews(){ try { return JSON.parse(store.get("seenNews") || "[]"); } catch { return []; } }
+function markNewsSeen(){ store.set("seenNews", JSON.stringify(NEWS.map(n => n.id))); store.set("lastVisit", new Date().toISOString()); }
+function maybeShowNews(){
+  if (tourI >= 0 || !$("#pv").hidden) return;
+  const last = store.get("lastVisit");
+  const seen = seenNews();
+  const pieces = NEWS.filter(n => !seen.includes(n.id) && places.some(p => p.id === n.placeId));
+  // places someone else added since this device's last visit (imported trip places have no author, so they don't count)
+  const added = last ? places.filter(p => p.by && p.by !== me.uid && p.at && p.at > last).sort((a,b) => b.at.localeCompare(a.at)) : [];
+  if (!last && store.get("tourDone") !== "1") { markNewsSeen(); return; }   // brand-new on this device: the tour covers it
+  if (!pieces.length && !added.length) { store.set("lastVisit", new Date().toISOString()); return; }
+  const close = () => { $("#news").hidden = true; markNewsSeen(); };
+  const go = id => { close(); openPlace(id); };
+  const card = h("div",{class:"ncard", role:"dialog", "aria-labelledby":"nTitle"},
+    h("div",{class:"tstep"}, "Since you were last here"),
+    h("h3",{id:"nTitle"}, pieces.length ? (pieces.length === 1 ? "A new piece has arrived" : pieces.length + " new pieces have arrived") : "What's new"));
+  for (const n of pieces) card.append(h("button",{class:"npiece", onclick:() => go(n.placeId)},
+    h("img",{src:n.img, alt:"Game piece for " + n.name}),
+    h("span",null, h("b",null, n.name), n.text, h("span",{class:"ngo"}, "Show me on the board →"))));
+  if (added.length) {
+    card.append(h("div",{class:"dayhead", style:"margin:12px 0 4px"}, added.length + (added.length === 1 ? " new place" : " new places")));
+    for (const p of added.slice(0, 5)) card.append(h("button",{class:"crow", onclick:() => go(p.id)},
+      icon(p), h("span",{class:"cn"}, p.name), h("span",{class:"cm"}, p.byName ? "by " + p.byName : p.status)));
+    if (added.length > 5) card.append(h("div",{class:"mt", style:"color:var(--muted);font-size:13px;margin-top:4px"}, "And " + (added.length - 5) + " more in Places."));
+  }
+  card.append(h("div",{class:"tbtns", style:"margin-top:14px"}, h("span",{style:"flex:1"}), h("button",{class:"btn primary", id:"nOk", onclick:close}, "Got it")));
+  const box = $("#news"); box.replaceChildren(card); box.hidden = false;
+  box.onclick = e => { if (e.target === box) close(); };
+  $("#nOk").focus();
+}
+document.addEventListener("keydown", e => { if (e.key === "Escape" && !$("#news").hidden) { $("#news").hidden = true; markNewsSeen(); } });
 
 /* ===================== import (first run) ===================== */
 function showImport(){
@@ -1434,6 +1477,7 @@ async function loadTrip(){
       render(); tick(false);
       let seen = false; try { seen = localStorage.getItem("tourDone") === "1"; } catch {}
       if (!seen && tourI < 0 && !window.__tourQueued) { window.__tourQueued = true; setTimeout(startTour, 1800); }
+      else if (seen && !window.__newsQueued) { window.__newsQueued = true; setTimeout(maybeShowNews, 2200); }
     });
   }
   render(); tick(false);
