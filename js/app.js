@@ -2,7 +2,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/fireba
 import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, onSnapshot, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-storage.js";
-import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610240659";
+import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610251002";
 
 /* ===================== helpers ===================== */
 const $ = s => document.querySelector(s);
@@ -390,7 +390,7 @@ function buildModel(key, s){
     const pos = Cesium.Cartesian3.fromDegrees(s.ll[0], s.ll[1]);
     const e = viewer.entities.add({position:pos, properties:pieceProps(key, s),
       orientation:Cesium.Transforms.headingPitchRollQuaternion(pos, new Cesium.HeadingPitchRoll(Cesium.Math.toRadians(gl.heading || 0), 0, 0)),
-      model:{uri:gl.uri + "?v=202610240659", scale:new Cesium.CallbackProperty(() => U * gl.size / gl.width * growKey(key), false), heightReference:Cesium.HeightReference.CLAMP_TO_GROUND,
+      model:{uri:gl.uri + "?v=202610251002", scale:new Cesium.CallbackProperty(() => U * gl.size / gl.width * growKey(key), false), heightReference:Cesium.HeightReference.CLAMP_TO_GROUND,
         shadows:Cesium.ShadowMode.CAST_ONLY, silhouetteColor:Cesium.Color.fromCssColorString(s.accent || "#13603f"), silhouetteSize:2}});
     const list = [e]; list.glb = true;
     ents.models.set(key, list);
@@ -1374,6 +1374,8 @@ addEventListener("resize", () => { if (tourI >= 0) showTour(); });
 // Shown once per device when something new lands: a new game piece (listed here when Claude adds one)
 // and places other people added since this phone or computer last opened the trip.
 const NEWS = [
+  {id:"piece-oslovar-2", stayKey:"sc", img:"models/oslovar.jpg", name:"Oslovar House",
+    text:"The Oslovar House has a brand-new game piece. Tap it to see it up close."},
   {id:"piece-labicyclette", placeId:"labicyclette", img:"models/labicyclette.jpg", name:"La Bicyclette",
     text:"The Carmel bistro now stands on the board as its own game piece. Tap it to see it up close."}
 ];
@@ -1384,7 +1386,7 @@ function maybeShowNews(){
   if (tourI >= 0 || !$("#pv").hidden) return;
   const last = store.get("lastVisit");
   const seen = seenNews();
-  const pieces = NEWS.filter(n => !seen.includes(n.id) && places.some(p => p.id === n.placeId));
+  const pieces = NEWS.filter(n => !seen.includes(n.id) && (n.stayKey ? STAYS()[n.stayKey] : places.some(p => p.id === n.placeId)));
   // places someone else added since this device's last visit (imported trip places have no author, so they don't count)
   const added = last ? places.filter(p => p.by && p.by !== me.uid && p.at && p.at > last).sort((a,b) => b.at.localeCompare(a.at)) : [];
   if (!last && store.get("tourDone") !== "1") { markNewsSeen(); return; }   // brand-new on this device: the tour covers it
@@ -1394,7 +1396,7 @@ function maybeShowNews(){
   const card = h("div",{class:"ncard", role:"dialog", "aria-labelledby":"nTitle"},
     h("div",{class:"tstep"}, "Since you were last here"),
     h("h3",{id:"nTitle"}, pieces.length ? (pieces.length === 1 ? "A new piece has arrived" : pieces.length + " new pieces have arrived") : "What's new"));
-  for (const n of pieces) card.append(h("button",{class:"npiece", onclick:() => go(n.placeId)},
+  for (const n of pieces) card.append(h("button",{class:"npiece", onclick:() => n.stayKey ? (close(), openStay(n.stayKey)) : go(n.placeId)},
     h("img",{src:n.img, alt:"Game piece for " + n.name}),
     h("span",null, h("b",null, n.name), n.text, h("span",{class:"ngo"}, "Show me on the board →"))));
   if (added.length) {
