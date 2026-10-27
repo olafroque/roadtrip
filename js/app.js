@@ -2,7 +2,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/fireba
 import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, onSnapshot, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-storage.js";
-import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610251002";
+import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610270927";
 
 /* ===================== helpers ===================== */
 const $ = s => document.querySelector(s);
@@ -390,7 +390,7 @@ function buildModel(key, s){
     const pos = Cesium.Cartesian3.fromDegrees(s.ll[0], s.ll[1]);
     const e = viewer.entities.add({position:pos, properties:pieceProps(key, s),
       orientation:Cesium.Transforms.headingPitchRollQuaternion(pos, new Cesium.HeadingPitchRoll(Cesium.Math.toRadians(gl.heading || 0), 0, 0)),
-      model:{uri:gl.uri + "?v=202610251002", scale:new Cesium.CallbackProperty(() => U * gl.size / gl.width * growKey(key), false), heightReference:Cesium.HeightReference.CLAMP_TO_GROUND,
+      model:{uri:gl.uri + "?v=202610270927", scale:new Cesium.CallbackProperty(() => U * gl.size / gl.width * growKey(key), false), heightReference:Cesium.HeightReference.CLAMP_TO_GROUND,
         shadows:Cesium.ShadowMode.CAST_ONLY, silhouetteColor:Cesium.Color.fromCssColorString(s.accent || "#13603f"), silhouetteSize:2}});
     const list = [e]; list.glb = true;
     ents.models.set(key, list);
@@ -680,6 +680,7 @@ $("#tabPlaces").onclick = () => { selId = null; setTab("places"); syncPins(); };
 $("#tabAdd").onclick = () => { if (!draft) newDraft(); setTab("add"); };
 $("#tabPlan").onclick = () => setTab("plan");
 $("#tabPhotos").onclick = () => setTab("photos");
+$("#actBtn").onclick = () => { setTab("activity"); toggleSheet(true); };
 $("#photoBtn").onclick = () => togglePhotos();
 $("#pv").addEventListener("click", e => { if (e.target.id === "pv") closePhoto(); });
 document.addEventListener("keydown", e => { if (e.key === "Escape" && pvId) closePhoto(); });
@@ -697,6 +698,7 @@ function render(){
   else if (tab === "add") v.append(...viewAdd());
   else if (tab === "photos") v.append(...viewPhotos());
   else if (tab === "stay") v.append(...viewStay());
+  else if (tab === "activity") v.append(...viewActivity());
   else v.append(...viewPlan());
 }
 function icon(p){
@@ -836,6 +838,7 @@ async function ensurePhotos(p){
   } catch { /* leave the Google Maps link as the fallback */ }
 }
 
+let editOpen = false;
 function viewPlace(){
   const p = places.find(x => x.id === selId);
   if (!p) return [h("button",{class:"back", onclick:() => setTab("places")},"← All places"), h("div",{class:"empty"},"This place was removed.")];
@@ -871,11 +874,33 @@ function viewPlace(){
   daySel.onchange = save; timeIn.onchange = save; whoSel.onchange = save;
   dt.append(h("div",{class:"two",style:"margin-top:10px"}, h("label",{class:"f"},"Day", daySel), h("label",{class:"f"},"Time", timeIn)));
   dt.append(h("label",{class:"f",style:"margin-top:10px"},"For", whoSel));
+  // everything else stays editable after a place is confirmed
+  const eName = h("input",{id:"eName", value:p.name || "", maxlength:"80"});
+  const eKind = h("select",{id:"eKind"}, ...Object.entries(KINDS).map(([k,v]) => h("option",{value:k, selected:p.kind === k}, v.label)));
+  const eAddr = h("input",{id:"eAddr", value:p.address || ""});
+  const eNote = h("textarea",{id:"eNote", rows:"3"}, p.note || "");
+  const eUrl = h("input",{id:"eUrl", value:p.url || "", placeholder:"https://"});
+  eName.onchange = () => { const v = eName.value.trim(); if (v) updatePlace(p.id, {name:v}); else eName.value = p.name; };
+  eKind.onchange = () => updatePlace(p.id, {kind:eKind.value});
+  eAddr.onchange = () => updatePlace(p.id, {address:eAddr.value.trim()});
+  eNote.onchange = () => updatePlace(p.id, {note:eNote.value.trim()});
+  eUrl.onchange = () => { const v = eUrl.value.trim(); updatePlace(p.id, {url:/^https?:\/\//.test(v) ? v : ""}); };
+  const ed = h("details",{class:"edit", open:editOpen},
+    h("summary",null,"Edit name, type, address, notes"),
+    h("label",{class:"f"},"Name", eName),
+    h("label",{class:"f"},"What", eKind),
+    h("label",{class:"f"},"Address", eAddr),
+    h("label",{class:"f"},"Notes", eNote),
+    h("label",{class:"f"},"Link", eUrl),
+    h("div",{style:"font-size:12px;color:var(--muted)"},"Changes save as soon as you leave a box."));
+  ed.addEventListener("toggle", () => { editOpen = ed.open; });
+  dt.append(ed);
   const confirmBox = h("span",{hidden:true}, "Remove this place for everyone? ",
     h("button",{class:"btn danger", onclick:() => deletePlace(p.id)},"Remove"), h("button",{class:"btn", onclick:() => { confirmBox.hidden = true; delBtn.hidden = false; }},"Keep"));
   const delBtn = h("button",{class:"btn danger", onclick:() => { delBtn.hidden = true; confirmBox.hidden = false; }},"Remove place");
   dt.append(h("div",{class:"btns"}, h("button",{class:"btn", onclick:() => startDrop(p.id)}, p.lng == null ? "Drop pin on map" : "Move pin"), delBtn, confirmBox));
-  if (p.byName) dt.append(h("div",{style:"margin-top:14px;font-size:12px;color:var(--muted)"}, "Added by " + p.byName));
+  const who = [p.byName ? "Added by " + p.byName + (p.at ? " " + ago(p.at) : "") : null, p.editedByName ? "Last changed by " + p.editedByName + " " + ago(p.editedAt) : null].filter(Boolean).join(" · ");
+  if (who) dt.append(h("div",{style:"margin-top:14px;font-size:12px;color:var(--muted)"}, who));
   out.push(dt); setTimeout(renderDistances); return out;
 }
 
@@ -969,7 +994,7 @@ function startDrop(target){
 function endDrop(){ dropFor = null; $("#dropBar").hidden = true; viewer && (viewer.scene.canvas.style.cursor = ""); toggleSheet(true); }
 $("#dropCancel").onclick = () => endDrop();
 async function updatePlace(id, patch){
-  try { await updateDoc(doc(db,"places",id), patch); }
+  try { await updateDoc(doc(db,"places",id), {...patch, editedBy:me.uid, editedByName:me.name, editedAt:new Date().toISOString()}); }
   catch (e) { $("#view").prepend(h("div",{class:"notice"},"Couldn't save that change (" + (e.code || "error") + "). Try again.")); }
 }
 async function deletePlace(id){
@@ -1370,6 +1395,53 @@ $("#helpBtn").onclick = () => startTour();
 addEventListener("resize", () => { if (tourI >= 0) showTour(); });
 
 
+
+/* ===================== activity: who's been on, what changed ===================== */
+let presence = [];
+const ago = iso => {
+  const ms = Date.now() - new Date(iso).getTime(); if (!isFinite(ms)) return "";
+  const m = Math.round(ms / 60000);
+  if (m < 2) return "just now"; if (m < 60) return m + " min ago";
+  const hr = Math.round(m / 60); if (hr < 24) return hr + (hr === 1 ? " hour ago" : " hours ago");
+  const d = Math.round(hr / 24); if (d < 14) return d + (d === 1 ? " day ago" : " days ago");
+  return "on " + new Intl.DateTimeFormat("en-US",{month:"short", day:"numeric"}).format(new Date(iso));
+};
+let lastPing = 0;
+function pingPresence(joined){
+  if (!me.uid || Date.now() - lastPing < 5*60e3) return;
+  lastPing = Date.now();
+  const data = {name:me.name || "", lastSeen:new Date().toISOString()};
+  if (joined) data.joined = joined;
+  setDoc(doc(db,"presence",me.uid), data, {merge:true}).catch(() => {});
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") pingPresence(); });
+function viewActivity(){
+  const out = [];
+  const ppl = h("div",{class:"locbox"}, h("div",{class:"st"}, h("b",null,"Who's been on")));
+  if (!presence.length) ppl.append(h("div",{class:"mt", style:"color:var(--muted);font-size:13px"}, "Nobody yet. People show up here the next time they open the trip."));
+  for (const x of [...presence].sort((a,b) => (b.lastSeen||"").localeCompare(a.lastSeen||""))) {
+    const fresh = Date.now() - new Date(x.lastSeen).getTime() < 10*60e3;
+    ppl.append(h("div",{class:"urow"},
+      h("span",{class:"cn"}, h("i",{class:"live" + (fresh ? " on" : "")}), h("b",null, x.name || "Someone"), x.id === me.uid ? " (you)" : ""),
+      h("span",{class:"cm"}, fresh ? "on now" : ago(x.lastSeen))));
+  }
+  out.push(ppl);
+  // recent changes from everyone: places added or changed, photos added
+  const ev = [];
+  for (const p of places) {
+    if (p.at && p.byName && p.by) ev.push({at:p.at, who:p.byName, what:"added", name:p.name, open:() => openPlace(p.id), p});
+    if (p.editedAt && p.editedByName && p.editedAt !== p.at) ev.push({at:p.editedAt, who:p.editedByName, what:"changed", name:p.name, open:() => openPlace(p.id), p});
+  }
+  for (const ph of photos) if (ph.at) ev.push({at:ph.at, who:ph.byName || "Someone", what:"added a photo", name:ph.caption || "", open:() => openPhoto(ph.id)});
+  ev.sort((a,b) => b.at.localeCompare(a.at));
+  out.push(h("div",{class:"dayhead"}, "Recent changes"));
+  if (!ev.length) out.push(h("div",{class:"empty"}, "No changes yet."));
+  for (const e of ev.slice(0, 30)) out.push(h("button",{class:"crow actrow", onclick:e.open},
+    h("span",{class:"ct"}, ago(e.at)),
+    h("span",{class:"cn"}, h("b",null, e.who), " " + e.what + (e.name ? " " : ""), e.name ? h("span",null, e.name) : null)));
+  return out;
+}
+
 /* ===================== what's new ===================== */
 // Shown once per device when something new lands: a new game piece (listed here when Claude adds one)
 // and places other people added since this phone or computer last opened the trip.
@@ -1465,6 +1537,11 @@ async function loadTrip(){
       if (tab !== "add") render();
       tick(false);
     }, e => banner("Places stopped updating (" + e.code + "). Reload the page."));
+    onSnapshot(collection(db,"presence"), s => {
+      presence = s.docs.map(d => ({id:d.id, ...d.data()}));
+      if (tab === "activity") render();
+    }, () => {});
+    pingPresence(window.__joined);
     onSnapshot(collection(db,"photos"), s => {
       photos = s.docs.map(d => ({id:d.id, ...d.data()})).sort((a,b) => (a.taken||0) - (b.taken||0));
       syncPhotoMarkers();
@@ -1487,7 +1564,7 @@ async function loadTrip(){
 async function gate(user){
   me.uid = user.uid;
   const m = await getDoc(doc(db,"members",user.uid)).catch(() => null);
-  if (m && m.exists()) { me.name = m.data().name || ""; $("#gate").hidden = true; await loadTrip(); return; }
+  if (m && m.exists()) { me.name = m.data().name || ""; try { window.__joined = m.data().at?.toDate?.().toISOString(); } catch {} $("#gate").hidden = true; await loadTrip(); return; }
   $("#gate").hidden = false;
   $("#gName").focus();
 }
@@ -1497,7 +1574,7 @@ $("#gateForm").addEventListener("submit", async e => {
   $("#gBtn").disabled = true; $("#gMsg").textContent = "Checking…";
   try {
     await setDoc(doc(db,"members",me.uid), {code, name, at:serverTimestamp()});
-    me.name = name; $("#gate").hidden = true; $("#gMsg").textContent = "";
+    me.name = name; window.__joined = new Date().toISOString(); $("#gate").hidden = true; $("#gMsg").textContent = "";
     await loadTrip();
   } catch (err) {
     $("#gMsg").textContent = err.code === "permission-denied" ? "That passcode doesn't match. Check the text from Olaf and try again." : "Couldn't connect (" + (err.code || "error") + "). Try again.";
