@@ -2,7 +2,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/fireba
 import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, onSnapshot, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-storage.js";
-import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610270927";
+import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610272141";
 
 /* ===================== helpers ===================== */
 const $ = s => document.querySelector(s);
@@ -390,7 +390,7 @@ function buildModel(key, s){
     const pos = Cesium.Cartesian3.fromDegrees(s.ll[0], s.ll[1]);
     const e = viewer.entities.add({position:pos, properties:pieceProps(key, s),
       orientation:Cesium.Transforms.headingPitchRollQuaternion(pos, new Cesium.HeadingPitchRoll(Cesium.Math.toRadians(gl.heading || 0), 0, 0)),
-      model:{uri:gl.uri + "?v=202610270927", scale:new Cesium.CallbackProperty(() => U * gl.size / gl.width * growKey(key), false), heightReference:Cesium.HeightReference.CLAMP_TO_GROUND,
+      model:{uri:gl.uri + "?v=202610272141", scale:new Cesium.CallbackProperty(() => U * gl.size / gl.width * growKey(key), false), heightReference:Cesium.HeightReference.CLAMP_TO_GROUND,
         shadows:Cesium.ShadowMode.CAST_ONLY, silhouetteColor:Cesium.Color.fromCssColorString(s.accent || "#13603f"), silhouetteSize:2}});
     const list = [e]; list.glb = true;
     ents.models.set(key, list);
@@ -512,6 +512,10 @@ function syncPins(){
 }
 
 /* cars: toy-car game pieces that turn with the road */
+// custom car models (Meshy). size = length in car units (the built-in toy car body is 4.6 long); heading turns the model to face forward
+const CAR_GLB = {
+  family: {uri:"models/car_roques.glb", width:1.9, size:5.6, heading:270}   // black 2026 Toyota RAV4 Hybrid
+};
 const CAR_PARTS = c => [
   {f:0, r:0, z:0.75, dim:[4.6,2.3,1.1], c},                 // body
   {f:-0.4, r:0, z:1.75, dim:[2.6,2.0,0.9], c:"#e8f1f6"},     // cabin
@@ -528,6 +532,18 @@ function drawCars(){
     // when parked (at a stay or a stop), the two cars sit side by side in front of the piece instead of on top of it
     const park = g === "family" ? [-3.4, -11] : [3.4, -11];
     const spot = c => c.mode === "drive" ? c.ll : [c.ll[0] + park[0]*U / (111320*Math.cos(c.ll[1]*Math.PI/180)), c.ll[1] + park[1]*U / 110540];
+    const bearingNow = () => { const c = carAt(g, t); return c.mode === "drive" ? (c.bearing || 0) : 0; };
+    const cg = CAR_GLB[g];
+    if (cg) {
+      // custom Meshy car: one model that follows the road and turns with it
+      const posAt = () => { const ll = spot(carAt(g, t)); return Cesium.Cartesian3.fromDegrees(ll[0], ll[1]); };
+      ents.cars[g + ":parts"] = [viewer.entities.add({
+        position:new Cesium.CallbackProperty(posAt, false),
+        orientation:new Cesium.CallbackProperty(() => Cesium.Transforms.headingPitchRollQuaternion(posAt(), new Cesium.HeadingPitchRoll(bearingNow() - Math.PI/2 + Cesium.Math.toRadians(cg.heading), 0, 0)), false),
+        model:{uri:cg.uri + "?v=202610272141", scale:new Cesium.CallbackProperty(() => CU() * cg.size / cg.width, false),
+          heightReference:Cesium.HeightReference.CLAMP_TO_GROUND, shadows:Cesium.ShadowMode.CAST_ONLY, minimumPixelSize:0,
+          silhouetteColor:Cesium.Color.fromCssColorString(gcol(g)), silhouetteSize:2}})];
+    } else {
     const parts = CAR_PARTS(gcol(g)).map(pt => {
       const posAt = () => {
         const c = carAt(g, t), b = c.mode === "drive" ? (c.bearing || 0) : 0, u = CU(), ll = spot(c);
@@ -542,6 +558,7 @@ function drawCars(){
       });
     });
     ents.cars[g + ":parts"] = parts;
+    }
     // label + camera target
     ents.cars[g] = viewer.entities.add({
       viewFrom:new Cesium.Cartesian3(-2600, -5200, 4200),   // ~7 km back: roads, towns and both cars stay readable
@@ -1446,6 +1463,8 @@ function viewActivity(){
 // Shown once per device when something new lands: a new game piece (listed here when Claude adds one)
 // and places other people added since this phone or computer last opened the trip.
 const NEWS = [
+  {id:"piece-car-roques", car:"family", img:"models/car_roques.jpg", name:"The Roques' RAV4",
+    text:"The Roques now drive a black 2026 Toyota RAV4 Hybrid on the board. Tap to ride along."},
   {id:"piece-oslovar-2", stayKey:"sc", img:"models/oslovar.jpg", name:"Oslovar House",
     text:"The Oslovar House has a brand-new game piece. Tap it to see it up close."},
   {id:"piece-labicyclette", placeId:"labicyclette", img:"models/labicyclette.jpg", name:"La Bicyclette",
@@ -1458,7 +1477,7 @@ function maybeShowNews(){
   if (tourI >= 0 || !$("#pv").hidden) return;
   const last = store.get("lastVisit");
   const seen = seenNews();
-  const pieces = NEWS.filter(n => !seen.includes(n.id) && (n.stayKey ? STAYS()[n.stayKey] : places.some(p => p.id === n.placeId)));
+  const pieces = NEWS.filter(n => !seen.includes(n.id) && (n.car ? G()[n.car] : n.stayKey ? STAYS()[n.stayKey] : places.some(p => p.id === n.placeId)));
   // places someone else added since this device's last visit (imported trip places have no author, so they don't count)
   const added = last ? places.filter(p => p.by && p.by !== me.uid && p.at && p.at > last).sort((a,b) => b.at.localeCompare(a.at)) : [];
   if (!last && store.get("tourDone") !== "1") { markNewsSeen(); return; }   // brand-new on this device: the tour covers it
@@ -1468,9 +1487,9 @@ function maybeShowNews(){
   const card = h("div",{class:"ncard", role:"dialog", "aria-labelledby":"nTitle"},
     h("div",{class:"tstep"}, "Since you were last here"),
     h("h3",{id:"nTitle"}, pieces.length ? (pieces.length === 1 ? "A new piece has arrived" : pieces.length + " new pieces have arrived") : "What's new"));
-  for (const n of pieces) card.append(h("button",{class:"npiece", onclick:() => n.stayKey ? (close(), openStay(n.stayKey)) : go(n.placeId)},
+  for (const n of pieces) card.append(h("button",{class:"npiece", onclick:() => n.car ? (close(), follow(n.car)) : n.stayKey ? (close(), openStay(n.stayKey)) : go(n.placeId)},
     h("img",{src:n.img, alt:"Game piece for " + n.name}),
-    h("span",null, h("b",null, n.name), n.text, h("span",{class:"ngo"}, "Show me on the board →"))));
+    h("span",null, h("b",null, n.name), n.text, h("span",{class:"ngo"}, n.car ? "Follow the car →" : "Show me on the board →"))));
   if (added.length) {
     card.append(h("div",{class:"dayhead", style:"margin:12px 0 4px"}, added.length + (added.length === 1 ? " new place" : " new places")));
     for (const p of added.slice(0, 5)) card.append(h("button",{class:"crow", onclick:() => go(p.id)},
