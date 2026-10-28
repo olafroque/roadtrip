@@ -2,7 +2,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/fireba
 import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, onSnapshot, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-storage.js";
-import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610272141";
+import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610272148";
 
 /* ===================== helpers ===================== */
 const $ = s => document.querySelector(s);
@@ -390,7 +390,7 @@ function buildModel(key, s){
     const pos = Cesium.Cartesian3.fromDegrees(s.ll[0], s.ll[1]);
     const e = viewer.entities.add({position:pos, properties:pieceProps(key, s),
       orientation:Cesium.Transforms.headingPitchRollQuaternion(pos, new Cesium.HeadingPitchRoll(Cesium.Math.toRadians(gl.heading || 0), 0, 0)),
-      model:{uri:gl.uri + "?v=202610272141", scale:new Cesium.CallbackProperty(() => U * gl.size / gl.width * growKey(key), false), heightReference:Cesium.HeightReference.CLAMP_TO_GROUND,
+      model:{uri:gl.uri + "?v=202610272148", scale:new Cesium.CallbackProperty(() => U * gl.size / gl.width * growKey(key), false), heightReference:Cesium.HeightReference.CLAMP_TO_GROUND,
         shadows:Cesium.ShadowMode.CAST_ONLY, silhouetteColor:Cesium.Color.fromCssColorString(s.accent || "#13603f"), silhouetteSize:2}});
     const list = [e]; list.glb = true;
     ents.models.set(key, list);
@@ -528,9 +528,9 @@ function drawCars(){
   for (const g of ["friends","family"]) {
     for (const e of (ents.cars[g + ":parts"] || [])) viewer.entities.remove(e);
     if (ents.cars[g]) viewer.entities.remove(ents.cars[g]);
-    const CU = () => Math.max(U * 1.1, 6);    // cars slightly oversized so they read as game tokens
+    const CU = () => U * PIECE_W / 5;          // toy car about as long as a game piece is wide
     // when parked (at a stay or a stop), the two cars sit side by side in front of the piece instead of on top of it
-    const park = g === "family" ? [-3.4, -11] : [3.4, -11];
+    const park = g === "family" ? [-8.5, -17] : [8.5, -17];
     const spot = c => c.mode === "drive" ? c.ll : [c.ll[0] + park[0]*U / (111320*Math.cos(c.ll[1]*Math.PI/180)), c.ll[1] + park[1]*U / 110540];
     const bearingNow = () => { const c = carAt(g, t); return c.mode === "drive" ? (c.bearing || 0) : 0; };
     const cg = CAR_GLB[g];
@@ -540,7 +540,7 @@ function drawCars(){
       ents.cars[g + ":parts"] = [viewer.entities.add({
         position:new Cesium.CallbackProperty(posAt, false),
         orientation:new Cesium.CallbackProperty(() => Cesium.Transforms.headingPitchRollQuaternion(posAt(), new Cesium.HeadingPitchRoll(bearingNow() - Math.PI/2 + Cesium.Math.toRadians(cg.heading), 0, 0)), false),
-        model:{uri:cg.uri + "?v=202610272141", scale:new Cesium.CallbackProperty(() => CU() * cg.size / cg.width, false),
+        model:{uri:cg.uri + "?v=202610272148", scale:new Cesium.CallbackProperty(() => U * PIECE_W / cg.width, false),   // same width as a place's game piece
           heightReference:Cesium.HeightReference.CLAMP_TO_GROUND, shadows:Cesium.ShadowMode.CAST_ONLY, minimumPixelSize:0,
           silhouetteColor:Cesium.Color.fromCssColorString(gcol(g)), silhouetteSize:2}})];
     } else {
@@ -562,10 +562,10 @@ function drawCars(){
     // label + camera target
     ents.cars[g] = viewer.entities.add({
       viewFrom:new Cesium.Cartesian3(-2600, -5200, 4200),   // ~7 km back: roads, towns and both cars stay readable
-      position:new Cesium.CallbackProperty(() => { const ll = spot(carAt(g, t)); return Cesium.Cartesian3.fromDegrees(ll[0], ll[1]); }, false),
+      position:new Cesium.CallbackProperty(() => { const ll = spot(carAt(g, t)); return Cesium.Cartesian3.fromDegrees(ll[0], ll[1], 9 * U); }, false),
       label:{text:G()[g].short, font:"700 12px Atkinson Hyperlegible, sans-serif", fillColor:Cesium.Color.WHITE, showBackground:true,
-        backgroundColor:Cesium.Color.fromCssColorString(gcol(g)), pixelOffset:new Cesium.Cartesian2(0, -34),
-        heightReference:Cesium.HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance:Number.POSITIVE_INFINITY}
+        backgroundColor:Cesium.Color.fromCssColorString(gcol(g)), pixelOffset:new Cesium.Cartesian2(0, -8), verticalOrigin:Cesium.VerticalOrigin.BOTTOM,
+        heightReference:Cesium.HeightReference.RELATIVE_TO_GROUND, disableDepthTestDistance:Number.POSITIVE_INFINITY}
     });
   }
 }
