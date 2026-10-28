@@ -2,7 +2,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/fireba
 import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, onSnapshot, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
 import { getStorage, ref as sref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-storage.js";
-import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610272148";
+import { firebaseConfig, MAPS_KEY } from "./config.js?v=202610272202";
 
 /* ===================== helpers ===================== */
 const $ = s => document.querySelector(s);
@@ -362,6 +362,7 @@ const PIECE_W = 15;
 const GLB = {
   aquarium:      {uri:"models/aquarium_meshy.glb", width:1.9, size:PIECE_W, heading:90},   // Meshy model, optimized (my code-built one: models/aquarium.glb)
   labicyclette:  {uri:"models/labicyclette.glb", width:1.9, size:PIECE_W, heading:90},   // Meshy model, optimized
+  "stay:star":   {uri:"models/stargazer.glb", width:1.9, size:PIECE_W, heading:90},   // Meshy model, optimized
   "stay:sc":     {uri:"models/oslovar.glb",  width:1.9, size:PIECE_W, heading:90}      // Meshy model, optimized
 };
 // the piece for the place open in the panel stands taller so it's easy to see
@@ -390,7 +391,7 @@ function buildModel(key, s){
     const pos = Cesium.Cartesian3.fromDegrees(s.ll[0], s.ll[1]);
     const e = viewer.entities.add({position:pos, properties:pieceProps(key, s),
       orientation:Cesium.Transforms.headingPitchRollQuaternion(pos, new Cesium.HeadingPitchRoll(Cesium.Math.toRadians(gl.heading || 0), 0, 0)),
-      model:{uri:gl.uri + "?v=202610272148", scale:new Cesium.CallbackProperty(() => U * gl.size / gl.width * growKey(key), false), heightReference:Cesium.HeightReference.CLAMP_TO_GROUND,
+      model:{uri:gl.uri + "?v=202610272202", scale:new Cesium.CallbackProperty(() => U * gl.size / gl.width * growKey(key), false), heightReference:Cesium.HeightReference.CLAMP_TO_GROUND,
         shadows:Cesium.ShadowMode.CAST_ONLY, silhouetteColor:Cesium.Color.fromCssColorString(s.accent || "#13603f"), silhouetteSize:2}});
     const list = [e]; list.glb = true;
     ents.models.set(key, list);
@@ -540,7 +541,7 @@ function drawCars(){
       ents.cars[g + ":parts"] = [viewer.entities.add({
         position:new Cesium.CallbackProperty(posAt, false),
         orientation:new Cesium.CallbackProperty(() => Cesium.Transforms.headingPitchRollQuaternion(posAt(), new Cesium.HeadingPitchRoll(bearingNow() - Math.PI/2 + Cesium.Math.toRadians(cg.heading), 0, 0)), false),
-        model:{uri:cg.uri + "?v=202610272148", scale:new Cesium.CallbackProperty(() => U * PIECE_W / cg.width, false),   // same width as a place's game piece
+        model:{uri:cg.uri + "?v=202610272202", scale:new Cesium.CallbackProperty(() => U * PIECE_W / cg.width, false),   // same width as a place's game piece
           heightReference:Cesium.HeightReference.CLAMP_TO_GROUND, shadows:Cesium.ShadowMode.CAST_ONLY, minimumPixelSize:0,
           silhouetteColor:Cesium.Color.fromCssColorString(gcol(g)), silhouetteSize:2}})];
     } else {
@@ -1463,6 +1464,8 @@ function viewActivity(){
 // Shown once per device when something new lands: a new game piece (listed here when Claude adds one)
 // and places other people added since this phone or computer last opened the trip.
 const NEWS = [
+  {id:"piece-stargazer", stayKey:"star", img:"models/stargazer.jpg", name:"Stargazer Hotel",
+    text:"The Roques' Monterey hotel now has its own game piece. Tap it to see it up close."},
   {id:"piece-car-roques", car:"family", img:"models/car_roques.jpg", name:"The Roques' RAV4",
     text:"The Roques now drive a black 2026 Toyota RAV4 Hybrid on the board. Tap to ride along."},
   {id:"piece-oslovar-2", stayKey:"sc", img:"models/oslovar.jpg", name:"Oslovar House",
